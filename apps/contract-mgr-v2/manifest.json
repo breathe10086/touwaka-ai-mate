@@ -25,6 +25,9 @@
       "skills": []
     }
   },
+  "custom_handlers": {
+    "batch_upload": "controllers/batch-upload.js"
+  },
   "fields": [
     {
       "name": "contract_name",

@@ -2,11 +2,16 @@ import logger from '../../lib/logger.js';
 import Utils from '../../lib/utils.js';
 import { Op, Sequelize } from 'sequelize';
 import { pathToFileURL } from 'url';
+import fs from 'fs/promises';
+import path from 'path';
 import {
   buildPaginatedResponse,
 } from '../../lib/query-builder.js';
 import ExtensionTableService from './extension-table.service.js';
 import InternalLLMService from '../../lib/internal-llm-service.js';
+
+const APPS_DIR = path.join(process.cwd(), 'apps');
+const CUSTOM_HANDLERS_CACHE = new Map();
 
 class MiniAppService {
   constructor(db) {
@@ -14,6 +19,7 @@ class MiniAppService {
     this.models = {};
     this.extensionService = new ExtensionTableService(db);
     this.llmService = new InternalLLMService(db);
+    this.appsDir = APPS_DIR;
   }
 
   ensureModels() {
@@ -32,6 +38,64 @@ class MiniAppService {
       this.models.AiModel = this.db.getModel('ai_model');
     }
     this.extensionService.ensureModels();
+  }
+
+  /**
+   * 获取 App 自定义 handler
+   * @param appId App ID
+   * @param handlerKey handler 名称（如 'batch_upload', 'compare_result'）
+   * @returns handler 模块或 null
+   */
+  async getCustomHandler(appId, handlerKey) {
+    const cacheKey = `${appId}:${handlerKey}`;
+    
+    if (CUSTOM_HANDLERS_CACHE.has(cacheKey)) {
+      return CUSTOM_HANDLERS_CACHE.get(cacheKey);
+    }
+    
+    try {
+      const manifestPath = path.join(this.appsDir, appId, 'manifest.json');
+      const content = await fs.readFile(manifestPath, 'utf-8');
+      const manifest = JSON.parse(content);
+      
+      const handlerPath = manifest.custom_handlers?.[handlerKey];
+      if (!handlerPath) {
+        CUSTOM_HANDLERS_CACHE.set(cacheKey, null);
+        return null;
+      }
+      
+      const fullPath = path.join(this.appsDir, appId, handlerPath);
+      const handlerModule = await import(pathToFileURL(fullPath).href);
+      
+      const handler = {
+        execute: handlerModule.default?.execute || handlerModule.execute,
+      };
+      
+      if (!handler.execute) {
+        logger.warn(`Custom handler ${handlerPath} for ${appId} has no execute function`);
+        CUSTOM_HANDLERS_CACHE.set(cacheKey, null);
+        return null;
+      }
+      
+      CUSTOM_HANDLERS_CACHE.set(cacheKey, handler);
+      logger.info(`Loaded custom handler ${handlerKey} for ${appId} from ${handlerPath}`);
+      return handler;
+    } catch (err) {
+      logger.warn(`Failed to load custom handler ${handlerKey} for ${appId}:`, err.message);
+      CUSTOM_HANDLERS_CACHE.set(cacheKey, null);
+      return null;
+    }
+  }
+
+  /**
+   * 清除 handler 缓存（用于 app 更新后刷新）
+   */
+  clearHandlerCache(appId) {
+    for (const key of CUSTOM_HANDLERS_CACHE.keys()) {
+      if (key.startsWith(`${appId}:`)) {
+        CUSTOM_HANDLERS_CACHE.delete(key);
+      }
+    }
   }
 
   // ==================== App CRUD ====================
@@ -587,18 +651,21 @@ class MiniAppService {
     return await this.models.MiniAppRow.findByPk(record.id);
   }
 
-  async batchUpload(appId, userId, attachmentIds) {
+async batchUpload(appId, userId, attachmentIds) {
     this.ensureModels();
 
     const app = await this.models.MiniApp.findByPk(appId);
     if (!app) throw new Error('App not found');
     if (!app.is_active) throw new Error('App is not active');
 
-    // contract-mgr-v2 使用独立的 content 表管理状态
-    if (appId === 'contract-mgr-v2') {
-      return await this.batchUploadForContractMgrV2(userId, attachmentIds);
+    // 检查是否有自定义 handler
+    const customHandler = await this.getCustomHandler(appId, 'batch_upload');
+    if (customHandler) {
+      const context = { db: this.db, models: this.models, app };
+      return await customHandler.execute(context, { userId, attachmentIds });
     }
 
+    // 默认逻辑
     const initialState = await this.models.AppState.findOne({
       where: { app_id: appId, is_initial: true },
     });
@@ -629,37 +696,6 @@ class MiniAppService {
       });
 
       records.push(record);
-    }
-
-    return {
-      upload_time: new Date().toISOString(),
-      count: records.length,
-      records,
-    };
-  }
-
-  async batchUploadForContractMgrV2(userId, attachmentIds) {
-    const records = [];
-    
-    for (const attId of attachmentIds) {
-      const attachment = await this.models.Attachment.findByPk(attId);
-      if (!attachment) continue;
-      if (attachment.created_by && attachment.created_by !== userId) continue;
-
-      const rowId = Utils.newID(20);
-      
-      await this.db.sequelize.query(`
-        INSERT INTO app_contract_mgr_v2_content 
-        (row_id, process_step, file_id, created_at, updated_at)
-        VALUES (?, 'pending_ocr', ?, NOW(), NOW())
-      `, { replacements: [rowId, attId] });
-
-      records.push({
-        id: rowId,
-        process_step: 'pending_ocr',
-        file_id: attId,
-        title: attachment.file_name || 'Unknown',
-      });
     }
 
     return {
