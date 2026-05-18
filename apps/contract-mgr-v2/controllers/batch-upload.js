@@ -12,32 +12,36 @@ export async function execute(context, params) {
   
   const records = [];
   
-  for (const attId of attachmentIds) {
-    const attachment = await db.getModel('attachment').findByPk(attId);
-    if (!attachment) continue;
-    if (attachment.created_by && attachment.created_by !== userId) continue;
+  try {
+    for (const attId of attachmentIds) {
+      const attachment = await db.getModel('attachment').findByPk(attId);
+      if (!attachment) continue;
+      if (attachment.created_by && attachment.created_by !== userId) continue;
+      
+      const rowId = Utils.newID(20);
+      
+      await db.sequelize.query(`
+        INSERT INTO app_contract_mgr_v2_content 
+        (row_id, process_step, file_id, created_at, updated_at)
+        VALUES (?, 'pending_ocr', ?, NOW(), NOW())
+      `, { replacements: [rowId, attId] });
+      
+      records.push({
+        id: rowId,
+        process_step: 'pending_ocr',
+        file_id: attId,
+        title: attachment.file_name || 'Unknown',
+      });
+    }
     
-    const rowId = Utils.newID(20);
-    
-    await db.sequelize.query(`
-      INSERT INTO app_contract_mgr_v2_content 
-      (row_id, process_step, file_id, created_at, updated_at)
-      VALUES (?, 'pending_ocr', ?, NOW(), NOW())
-    `, { replacements: [rowId, attId] });
-    
-    records.push({
-      id: rowId,
-      process_step: 'pending_ocr',
-      file_id: attId,
-      title: attachment.file_name || 'Unknown',
-    });
+    return {
+      upload_time: new Date().toISOString(),
+      count: records.length,
+      records,
+    };
+  } catch (error) {
+    throw new Error(`batch_upload handler failed: ${error.message}`);
   }
-  
-  return {
-    upload_time: new Date().toISOString(),
-    count: records.length,
-    records,
-  };
 }
 
 export default { execute };
