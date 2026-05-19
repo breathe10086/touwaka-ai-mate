@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { useSystemSettingsStore } from '@/stores/systemSettings'
 import { getLocale } from '@/i18n'
 
 const router = createRouter({
@@ -160,7 +161,9 @@ router.beforeEach(async (to, from) => {
     return { name: 'experts' }
   }
 
-  document.title = to.meta.title ? `${to.meta.title} - Touwaka Mate` : 'Touwaka Mate'
+  const systemSettingsStore = useSystemSettingsStore()
+  const appName = systemSettingsStore.brandingSettings?.app_name || 'Touwaka Mate'
+  document.title = to.meta.title ? `${to.meta.title} - ${appName}` : appName
   document.documentElement.setAttribute('lang', getLocale())
 })
 
