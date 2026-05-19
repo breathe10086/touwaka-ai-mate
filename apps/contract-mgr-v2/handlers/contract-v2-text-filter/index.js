@@ -7,9 +7,20 @@ const DEFAULT_FILTER_CONFIG = {
   model_id: null,
   temperature: 0.3,
 };
+
+const CHUNK_MAX_LENGTH = parseInt(process.env.TEXT_FILTER_MAX_LENGTH) || 60000;
+const CONTEXT_SUMMARY_MAX_LENGTH = 2000;
 const CONTENT_TABLE = 'app_contract_mgr_v2_content';
 
-const JSON_FORMAT_PROMPT = `
+function getFilterConfig(app, stateName) {
+  return getStepResource(app, stateName, getStepResource(app, 'pending_filter', DEFAULT_FILTER_CONFIG));
+}
+
+function getFilterPrompt(app) {
+  return getPrompt(app, 'filter', '去除页码、水印、乱码、多余的空白字符，保留正文内容');
+}
+
+const CHUNK_SYSTEM_SUFFIX = `
 
 你必须返回严格的JSON格式：
 {
@@ -25,14 +36,6 @@ const JSON_FORMAT_PROMPT = `
 
 注意：如果输入开头是上一轮的carried_over（原文），请完整处理该章节后，再继续处理后续内容。`;
 
-function getFilterConfig(app) {
-  return getStepResource(app, 'pending_filter', DEFAULT_FILTER_CONFIG);
-}
-
-function getFilterPrompt(app) {
-  return getPrompt(app, 'filter', '去除页码、水印、乱码、多余的空白字符，保留正文内容');
-}
-
 async function filterChunk(services, filterPrompt, filterConfig, chunkInput) {
   const response = await services.callLlm('filter_text', {
     instruction: filterPrompt + JSON_FORMAT_PROMPT,
@@ -41,7 +44,12 @@ async function filterChunk(services, filterPrompt, filterConfig, chunkInput) {
     ...buildLlmParams(filterConfig),
   });
 
-  const parsed = parseLlmResponse(response);
+  let parsed;
+  if (response.parsed && typeof response.parsed === 'object') {
+    parsed = response.parsed;
+  } else {
+    parsed = parseLlmResponse(response);
+  }
 
   if (!parsed || typeof parsed.processed_text !== 'string') {
     throw new Error('LLM返回的JSON格式无效');

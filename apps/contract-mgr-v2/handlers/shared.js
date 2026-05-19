@@ -3,24 +3,35 @@ import logger from '../../../lib/logger.js';
 export function splitIntoChunks(text, maxChars) {
   if (!text || text.length <= maxChars) return text ? [text] : [];
 
+  const paragraphs = text.split('\n\n');
   const chunks = [];
-  let start = 0;
+  let current = '';
 
-  while (start < text.length) {
-    let end = Math.min(start + maxChars, text.length);
-    
-    if (end < text.length) {
-      const lastNewline = text.lastIndexOf('\n', end);
-      if (lastNewline > start) {
-        end = lastNewline + 1;
+  for (const para of paragraphs) {
+    if (current.length + para.length + 2 <= maxChars) {
+      current += (current ? '\n\n' : '') + para;
+    } else {
+      if (current) chunks.push(current);
+      if (para.length > maxChars) {
+        const lines = para.split('\n');
+        let lineChunk = '';
+        for (const line of lines) {
+          if (lineChunk.length + line.length + 1 <= maxChars) {
+            lineChunk += (lineChunk ? '\n' : '') + line;
+          } else {
+            if (lineChunk) chunks.push(lineChunk);
+            lineChunk = line;
+          }
+        }
+        current = lineChunk;
+      } else {
+        current = para;
       }
     }
-
-    chunks.push(text.slice(start, end));
-    start = end;
   }
+  if (current) chunks.push(current);
 
-  return chunks;
+  return chunks.length > 0 ? chunks : [text];
 }
 
 export function parseLlmResponse(response) {
@@ -84,10 +95,12 @@ export function buildLlmParams(stepConfig) {
   const params = {
     model_id: stepConfig.model_id || null,
     temperature: stepConfig.temperature ?? 0.3,
-    enable_thinking: stepConfig.enable_thinking ?? false,
   };
-  if (params.enable_thinking && stepConfig.thinking_budget) {
-    params.thinking_budget = stepConfig.thinking_budget;
+  if (stepConfig.enable_thinking) {
+    params.enable_thinking = true;
+    if (stepConfig.thinking_budget) {
+      params.thinking_budget = stepConfig.thinking_budget;
+    }
   }
   return params;
 }
