@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getInvoiceDetail, type InvoiceDetail } from '@/api/invoice'
+import { ArrowLeft } from '@element-plus/icons-vue'
+import { getInvoiceDetail, type InvoiceDetail as InvoiceDetailType } from '@/api/invoice'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps<{ rowId: string }>()
 const emit = defineEmits<{ back: [] }>()
 
 const loading = ref(false)
-const detail = ref<InvoiceDetail | null>(null)
+const detail = ref<InvoiceDetailType | null>(null)
 
 const statusLabels: Record<string, { label: string; type: string }> = {
   pending_process: { label: '待处理', type: 'info' },
