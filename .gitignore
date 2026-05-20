@@ -20,3 +20,6 @@ server.log
 # 自动生成的类型声明
 frontend/components.d.ts
 frontend/auto-imports.d.ts
+
+# 任务文档
+docs/tasks/
