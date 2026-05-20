@@ -170,6 +170,40 @@ function clearInput() {
   grandTotal.value = null
   errorMessage.value = ''
 }
+
+function generateTabText(): string {
+  if (!hasResult.value) return ''
+  const headers = [t('downtimeAnalyzer.account'), t('downtimeAnalyzer.directWage'), t('downtimeAnalyzer.surcharge'), t('downtimeAnalyzer.totalLaborCost')]
+  const lines: string[] = [headers.join('\t')]
+
+  for (const group of groupedData.value) {
+    for (const row of group.rows) {
+      const surchargeStr = row.surcharge > 0 ? row.surcharge.toFixed(2) : ''
+      lines.push([row.account, row.directWage.toFixed(2), surchargeStr, row.totalLaborCost.toFixed(2)].join('\t'))
+    }
+    const sub = group.subtotal
+    const subSurchargeStr = sub.surcharge > 0 ? sub.surcharge.toFixed(2) : ''
+    lines.push([`${t('downtimeAnalyzer.subtotal')}(${group.category})`, sub.directWage.toFixed(2), subSurchargeStr, sub.totalLaborCost.toFixed(2)].join('\t'))
+  }
+
+  if (grandTotal.value) {
+    const gt = grandTotal.value
+    const gtSurchargeStr = gt.surcharge > 0 ? gt.surcharge.toFixed(2) : ''
+    lines.push([t('downtimeAnalyzer.grandTotal'), gt.directWage.toFixed(2), gtSurchargeStr, gt.totalLaborCost.toFixed(2)].join('\t'))
+  }
+
+  return lines.join('\n')
+}
+
+async function copyToClipboard() {
+  const text = generateTabText()
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success(t('downtimeAnalyzer.copySuccess'))
+  } catch {
+    ElMessage.error(t('downtimeAnalyzer.copyFailed'))
+  }
+}
 </script>
 
 <template>
@@ -207,7 +241,10 @@ function clearInput() {
       />
 
       <div v-if="hasResult" class="result-section">
-        <label class="section-label">{{ t('downtimeAnalyzer.resultLabel') }}</label>
+        <div class="result-header">
+          <label class="section-label">{{ t('downtimeAnalyzer.resultLabel') }}</label>
+          <el-button size="small" @click="copyToClipboard">{{ t('downtimeAnalyzer.copyToExcel') }}</el-button>
+        </div>
         <table class="result-table">
           <thead>
             <tr>
@@ -326,10 +363,22 @@ function clearInput() {
   margin-top: 24px;
 }
 
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.result-header .section-label {
+  margin-bottom: 0;
+}
+
 .result-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 14px;
+  table-layout: fixed;
 }
 
 .result-table th,
@@ -337,6 +386,24 @@ function clearInput() {
   padding: 12px 16px;
   text-align: left;
   border-bottom: 1px solid var(--color-border, #eee);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.result-table th:first-child,
+.result-table td:first-child {
+  width: 45%;
+  text-align: left;
+}
+
+.result-table th:nth-child(2),
+.result-table td:nth-child(2),
+.result-table th:nth-child(3),
+.result-table td:nth-child(3),
+.result-table th:nth-child(4),
+.result-table td:nth-child(4) {
+  width: 18.33%;
+  text-align: right;
 }
 
 .result-table th {
