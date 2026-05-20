@@ -222,34 +222,7 @@
     ],
     "max_file_size": 20971520,
     "batch_enabled": true,
-    "batch_limit": 20,
-    "step_resources": {
-      "pending_ocr": {
-        "type": "mcp",
-        "mcp": {
-          "server": "markitdown",
-          "tool": "submit_conversion_task",
-          "params_mapping": {
-            "content": "file.base64",
-            "filename": "file.name"
-          }
-        }
-      },
-      "ocr_submitted": {
-        "type": "mcp",
-        "mcp": {
-          "server": "markitdown",
-          "tool": "get_task",
-          "hide_params_mapping": true
-        }
-      },
-      "pending_extract": {
-        "type": "internal_llm",
-        "model_id": null,
-        "temperature": 0.1,
-        "prompt_type": "extract_invoice_from_ocr"
-      }
-    }
+    "batch_limit": 20
   },
   "states": [
     {

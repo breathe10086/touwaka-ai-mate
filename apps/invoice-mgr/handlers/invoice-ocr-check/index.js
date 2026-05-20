@@ -1,18 +1,5 @@
 import logger from '../../../lib/logger.js';
 
-function getAppConfig(app) {
-  let config = app?.config;
-  if (typeof config === 'string') {
-    try { config = JSON.parse(config); } catch { config = {}; }
-  }
-  return config || {};
-}
-
-function getStepResource(app, stateName, fallback = {}) {
-  const config = getAppConfig(app);
-  return config?.step_resources?.[stateName] || fallback;
-}
-
 const ROWS_TABLE = 'app_invoice_mgr_rows';
 const ITEMS_TABLE = 'app_invoice_mgr_items';
 
@@ -123,14 +110,7 @@ export const availableOutputs = [
 export default {
   availableOutputs,
   async process(context) {
-    const { record, services, app } = context;
-
-    const ocrStepConfig = getStepResource(app, 'ocr_submitted', {
-      type: 'mcp',
-      mcp: { server: 'markitdown', tool: 'get_task' }
-    });
-    const mcpServer = ocrStepConfig.mcp?.server || 'markitdown';
-    const mcpTool = ocrStepConfig.mcp?.tool || 'get_task';
+    const { record, services } = context;
 
     const taskId = record.data?._ocr_task_id || record.data?.ocr_task_id;
     if (!taskId) {
@@ -138,13 +118,13 @@ export default {
       return { success: false, error: '缺少OCR任务ID' };
     }
 
-    logger.info(`[invoice-ocr-check] Record ${record.id}: 检查 task_id=${taskId} via ${mcpServer}`);
+    logger.info(`[invoice-ocr-check] Record ${record.id}: 检查 task_id=${taskId}`);
 
     let mcpResult;
     try {
-      mcpResult = await services.callMcp(mcpServer, mcpTool, { task_id: taskId });
+      mcpResult = await services.callMcp('markitdown', 'get_task', { task_id: taskId });
     } catch (e) {
-      logger.error(`[invoice-ocr-check] Record ${record.id}: ${mcpServer} get_task异常 - ${e.message}`);
+      logger.error(`[invoice-ocr-check] Record ${record.id}: get_task异常 - ${e.message}`);
       return { success: false, error: `OCR状态查询失败: ${e.message}` };
     }
 
@@ -176,31 +156,14 @@ export default {
 
     logger.info(`[invoice-ocr-check] Record ${record.id}: OCR完成, 文本长度=${ocrText.length}`);
 
-    const llmStepConfig = getStepResource(app, 'pending_extract', {
-      type: 'internal_llm',
-      model_id: null,
-      temperature: 0.1,
-      prompt_type: 'extract_invoice_from_ocr'
-    });
-
-    const promptType = llmStepConfig.prompt_type || 'extract_invoice_from_ocr';
-    const llmParams = {
-      instruction: EXTRACT_PROMPT,
-      ocr_text: ocrText.substring(0, 60000),
-      response_format: 'json',
-      temperature: llmStepConfig.temperature ?? 0.1,
-    };
-    if (llmStepConfig.model_id) {
-      llmParams.model_id = llmStepConfig.model_id;
-    }
-    if (llmStepConfig.enable_thinking) {
-      llmParams.enable_thinking = true;
-      llmParams.thinking_budget = llmStepConfig.thinking_budget;
-    }
-
     let llmResult;
     try {
-      llmResult = await services.callLlm(promptType, llmParams);
+      llmResult = await services.callLlm('extract_invoice_from_ocr', {
+        instruction: EXTRACT_PROMPT,
+        ocr_text: ocrText.substring(0, 60000),
+        response_format: 'json',
+        temperature: 0.1,
+      });
     } catch (e) {
       logger.error(`[invoice-ocr-check] Record ${record.id}: LLM提取异常 - ${e.message}`);
       return { success: false, error: `LLM提取异常: ${e.message}` };
