@@ -343,5 +343,6 @@
       }
     }
   },
-  "visibility": "all"
+  "visibility": "all",
+  "component": "InvoiceView"
 }
