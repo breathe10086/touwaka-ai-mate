@@ -222,7 +222,29 @@
     ],
     "max_file_size": 20971520,
     "batch_enabled": true,
-    "batch_limit": 20
+    "batch_limit": 20,
+    "step_resources": {
+      "pending_ocr": {
+        "type": "mcp",
+        "mcp": {
+          "server": "markitdown",
+          "tool": "submit_conversion_task"
+        }
+      },
+      "ocr_submitted": {
+        "type": "mcp",
+        "mcp": {
+          "server": "markitdown",
+          "tool": "get_task"
+        }
+      },
+      "pending_extract": {
+        "type": "internal_llm",
+        "model_id": null,
+        "temperature": 0.1,
+        "prompt_type": "extract_invoice_from_ocr"
+      }
+    }
   },
   "states": [
     {
