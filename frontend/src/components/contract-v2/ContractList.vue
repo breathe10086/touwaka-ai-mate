@@ -336,9 +336,9 @@ const allNodes = computed(() => flatTreeNodes(store.tree))
 
 .contract-card {
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  padding: 14px 18px;
-  margin-bottom: 10px;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
   cursor: pointer;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
