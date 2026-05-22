@@ -19,6 +19,7 @@ const AppComponentMap: Record<string, Component> = {
   'ContractV2View': defineAsyncComponent(() => import('@/views/contract-v2/ContractV2View.vue')),
   'DowntimeAnalyzer': defineAsyncComponent(() => import('@/views/downtime-analyzer/DowntimeAnalyzer.vue')),
   'InvoiceView': defineAsyncComponent(() => import('@/views/invoice/InvoiceView.vue')),
+  'OcrToolView': defineAsyncComponent(() => import('@/views/ocr-tool/OcrToolView.vue')),
 }
 
 const route = useRoute()

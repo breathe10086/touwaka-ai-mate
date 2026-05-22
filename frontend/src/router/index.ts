@@ -126,6 +126,11 @@ const router = createRouter({
           name: 'app-detail',
           component: () => import('@/views/AppDetailView.vue'),
         },
+        {
+          path: 'ocr-tool',
+          name: 'ocr-tool',
+          component: () => import('@/views/ocr-tool/OcrToolView.vue'),
+        },
       ],
     },
     {
