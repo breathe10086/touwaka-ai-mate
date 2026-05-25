@@ -1,7 +1,16 @@
 import logger from '../../lib/logger.js';
 import { createTask, getTask } from '../../lib/ocr-tool-store.js';
+import { Sequelize } from 'sequelize';
 
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 1 * 1024 * 1024; // 1MB，避免超过nginx限制
+
+// Database connection for reading app config
+const sequelize = new Sequelize('touwaka_mate', 'touwaka', '123456', {
+  host: 'localhost',
+  port: 3306,
+  dialect: 'mysql',
+  logging: false
+});
 
 function normalizeImageDataUrl(imageInput) {
   if (!imageInput || typeof imageInput !== 'string') {
@@ -92,6 +101,29 @@ class OcrToolController {
     } catch (err) {
       logger.error('[OCR-Tool] status error:', err);
       ctx.error('status query failed', 500);
+    }
+  }
+
+  async getPromptPresets(ctx) {
+    try {
+      const result = await sequelize.query(
+        "SELECT config FROM mini_apps WHERE id='ocr-tool'",
+        { type: Sequelize.QueryTypes.SELECT }
+      );
+      
+      if (!result[0]?.config) {
+        ctx.success({ presets: [], defaultId: 'markdown' });
+        return;
+      }
+
+      const config = JSON.parse(result[0].config);
+      const presets = config.prompt_presets || [];
+      const defaultId = config.default_prompt_id || 'markdown';
+
+      ctx.success({ presets, defaultId });
+    } catch (err) {
+      logger.error('[OCR-Tool] getPromptPresets error:', err);
+      ctx.success({ presets: [], defaultId: 'markdown' });
     }
   }
 }

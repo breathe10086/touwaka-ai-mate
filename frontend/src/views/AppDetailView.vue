@@ -51,7 +51,7 @@ function goBack() {
 <style scoped>
 .app-detail-view {
   padding: 0;
-  height: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
 }

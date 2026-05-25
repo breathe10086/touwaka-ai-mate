@@ -11,4 +11,8 @@ router.get('/api/ocr/status/:taskId', authenticate(), async (ctx) => {
   await ctx.state.controllers.ocrTool.getStatus(ctx);
 });
 
+router.get('/api/ocr/presets', authenticate(), async (ctx) => {
+  await ctx.state.controllers.ocrTool.getPromptPresets(ctx);
+});
+
 export default router;

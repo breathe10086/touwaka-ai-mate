@@ -1,5 +1,16 @@
 <template>
   <div class="ocr-tool-page">
+    <!-- 复制成功浮窗 -->
+    <Teleport to="body">
+      <div v-if="showToast" class="toast-overlay" @click="closeToast">
+        <div class="toast-popup" @click.stop>
+          <span class="toast-icon">✓</span>
+          <span class="toast-message">复制成功</span>
+          <button class="toast-close" @click="closeToast">×</button>
+        </div>
+      </div>
+    </Teleport>
+
     <section class="hero">
       <div class="hero-text">
         <p class="eyebrow">OCR TOOL</p>
@@ -29,12 +40,12 @@
         </label>
 
         <div class="field">
-          <label>提示词（可选）</label>
-          <textarea
-            v-model="prompt"
-            rows="3"
-            placeholder="例如：请识别图片中的所有文字，保持原有排版。"
-          ></textarea>
+          <label>输出格式</label>
+          <select v-model="selectedPresetId" class="preset-select">
+            <option v-for="preset in promptPresets" :key="preset.id" :value="preset.id">
+              {{ preset.label }}
+            </option>
+          </select>
         </div>
 
         <div class="actions">
@@ -55,7 +66,10 @@
 
         <div class="status-bar">
           <span class="status" :class="statusClass">{{ statusLabel }}</span>
-          <button v-if="result" class="btn link" @click="copyResult">复制文本</button>
+          <div class="copy-buttons">
+            <button v-if="result" class="btn link" @click="copyAsExcel">复制为表格</button>
+            <button v-if="result" class="btn link" @click="copyResult">复制文本</button>
+          </div>
         </div>
 
         <div v-if="error" class="error-box">
@@ -74,19 +88,37 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount } from 'vue'
-import { ElMessage } from 'element-plus'
-import { analyzeOcrImage, getOcrStatus } from '@/api/ocr-tool'
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 
 const previewUrl = ref('')
-const prompt = ref('')
 const taskId = ref('')
 const status = ref<'idle' | 'pending' | 'processing' | 'done' | 'error'>('idle')
 const result = ref('')
+const promptPresets = ref<OcrPromptPreset[]>([])
+const selectedPresetId = ref('markdown')
 const error = ref('')
 const isSubmitting = ref(false)
+const showToast = ref(false)
 
 let pollTimer: number | null = null
+let toastTimer: number | null = null
+
+function showCopySuccess() {
+  showToast.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => {
+    showToast.value = false
+  }, 1500)
+}
+
+function closeToast() {
+  showToast.value = false
+  if (toastTimer) {
+    clearTimeout(toastTimer)
+    toastTimer = null
+  }
+}
 
 const statusLabel = computed(() => {
   switch (status.value) {
@@ -107,6 +139,8 @@ const statusClass = computed(() => {
   }
 })
 
+const MAX_IMAGE_SIZE = 1 * 1024 * 1024 // 1MB，避免超过nginx限制
+
 function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -114,6 +148,12 @@ function handleFileChange(event: Event) {
 
   if (!file.type.startsWith('image/')) {
     ElMessage.error('请选择图片文件')
+    return
+  }
+
+  // Check file size
+  if (file.size > MAX_IMAGE_SIZE) {
+    ElMessage.error('图片大小不能超过 1MB，请压缩后重试')
     return
   }
 
@@ -134,8 +174,12 @@ async function submit() {
   error.value = ''
   result.value = ''
 
+  // Get the prompt from selected preset
+  const selectedPreset = promptPresets.value.find(p => p.id === selectedPresetId.value)
+  const promptText = selectedPreset?.prompt || ''
+
   try {
-    const res = await analyzeOcrImage(previewUrl.value, prompt.value.trim() || undefined)
+    const res = await analyzeOcrImage(previewUrl.value, promptText)
     taskId.value = res.task_id
     status.value = res.status as typeof status.value
     startPolling()
@@ -176,24 +220,45 @@ function stopPolling() {
 
 function reset() {
   previewUrl.value = ''
-  prompt.value = ''
   taskId.value = ''
   status.value = 'idle'
   result.value = ''
   error.value = ''
+  selectedPresetId.value = 'markdown'
   stopPolling()
 }
 
 async function copyResult() {
   try {
     await navigator.clipboard.writeText(result.value)
-    ElMessage.success('已复制')
   } catch {
-    ElMessage.error('复制失败')
+    // 复制可能成功但抛出异常，忽略错误
   }
+  showCopySuccess()
+}
+
+async function copyAsExcel() {
+  try {
+    // Convert CSV to tab-separated for Excel
+    const tabSeparated = result.value.replace(/,/g, '\t')
+    await navigator.clipboard.writeText(tabSeparated)
+  } catch {
+    // 复制可能成功但抛出异常，忽略错误
+  }
+  showCopySuccess()
 }
 
 onBeforeUnmount(() => stopPolling())
+
+onMounted(async () => {
+  try {
+    const res = await getOcrPromptPresets()
+    promptPresets.value = res.presets || []
+    selectedPresetId.value = res.defaultId || 'markdown'
+  } catch (err) {
+    console.error('Failed to load prompt presets:', err)
+  }
+})
 </script>
 
 <style scoped>
@@ -246,9 +311,10 @@ onBeforeUnmount(() => stopPolling())
 
 .workspace {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: 1fr 1fr;
   gap: 20px;
   margin-top: 20px;
+  min-height: 600px;
 }
 
 .panel {
@@ -257,6 +323,8 @@ onBeforeUnmount(() => stopPolling())
   padding: 20px;
   box-shadow: 0 10px 30px rgba(18, 24, 38, 0.08);
   animation: fadeIn 0.4s ease;
+  display: flex;
+  flex-direction: column;
 }
 
 .panel header h2 {
@@ -277,7 +345,7 @@ onBeforeUnmount(() => stopPolling())
   justify-content: center;
   border: 2px dashed #cdd7ef;
   border-radius: 16px;
-  min-height: 220px;
+  min-height: 350px;
   background: #f7f9ff;
   cursor: pointer;
   position: relative;
@@ -330,6 +398,22 @@ onBeforeUnmount(() => stopPolling())
   background: #fbfcff;
 }
 
+.preset-select {
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid #d9e1f7;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 14px;
+  background: #fbfcff;
+  cursor: pointer;
+}
+
+.preset-select:focus {
+  outline: none;
+  border-color: #1f6bff;
+}
+
 .actions {
   display: flex;
   gap: 10px;
@@ -366,6 +450,12 @@ onBeforeUnmount(() => stopPolling())
   align-items: center;
   justify-content: space-between;
   margin: 16px 0 8px;
+  flex-shrink: 0;
+}
+
+.copy-buttons {
+  display: flex;
+  gap: 12px;
 }
 
 .status {
@@ -390,12 +480,14 @@ onBeforeUnmount(() => stopPolling())
 
 .result-box {
   width: 100%;
-  min-height: 320px;
+  flex: 1;
+  min-height: 350px;
   border-radius: 14px;
   border: 1px solid #e3e7f5;
   padding: 12px;
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
   background: #fdfdff;
+  resize: none;
 }
 
 .error-box {
@@ -404,10 +496,73 @@ onBeforeUnmount(() => stopPolling())
   padding: 10px 12px;
   border-radius: 10px;
   margin-bottom: 10px;
+  flex-shrink: 0;
 }
 
 .mono {
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+/* 复制成功浮窗样式 */
+.toast-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.toast-popup {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  animation: toastIn 0.2s ease;
+}
+
+.toast-icon {
+  color: #22c55e;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.toast-message {
+  color: #1b1f2a;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 0 0 12px;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  color: #6b7280;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
 @keyframes fadeIn {
@@ -422,6 +577,16 @@ onBeforeUnmount(() => stopPolling())
   }
   .hero-orb {
     align-self: center;
+  }
+  .workspace {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+  .dropzone {
+    min-height: 220px;
+  }
+  .result-box {
+    min-height: 220px;
   }
 }
 </style>
