@@ -82,8 +82,9 @@ const barChartOption = computed(() => {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      formatter: (params: { seriesName: string; value: number }[]) => {
-        const category = params[0].axisValue
+      formatter: (params: { seriesName: string; value: number; axisValue?: string }[]) => {
+        if (!params?.length) return ''
+        const category = params[0]?.axisValue || ''
         let html = `<strong>${category}</strong><br/>`
         params.forEach((p) => {
           html += `${p.seriesName}: ${p.value.toFixed(2)}<br/>`
