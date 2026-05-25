@@ -86,6 +86,7 @@ export interface StepResourceConfig {
   temperature?: number
   enable_thinking?: boolean
   judge_model_id?: string
+  judge_temperature?: number
 }
 
 export interface McpResourceTarget {
