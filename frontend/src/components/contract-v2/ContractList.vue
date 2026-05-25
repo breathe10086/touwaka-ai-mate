@@ -238,10 +238,10 @@ const allNodes = computed(() => flatTreeNodes(store.tree))
 
     <div class="contract-list-pagination" v-if="store.contractsTotal > store.contractsPageSize">
       <Pagination
+        :current-page="store.contractsPage"
+        :total-pages="Math.ceil(store.contractsTotal / store.contractsPageSize)"
         :total="store.contractsTotal"
-        :page="store.contractsPage"
-        :page-size="store.contractsPageSize"
-        @current-change="handlePageChange"
+        @change="handlePageChange"
       />
     </div>
     <el-dialog v-model="showCreateDialog" title="新建合同" width="520px" destroy-on-close>

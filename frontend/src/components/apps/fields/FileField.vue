@@ -34,13 +34,13 @@
 import { ref, computed } from 'vue'
 import { useToastStore } from '@/stores/toast'
 import apiClient from '@/api/client'
-import type { AppField } from '@/api/mini-apps'
+import type { AppField, AppConfig } from '@/api/mini-apps'
 
 const props = defineProps<{
   field: AppField
   modelValue: unknown
   readonly?: boolean
-  app?: { id: string }
+  app?: { id: string; config?: AppConfig }
   recordId?: string
 }>()
 
