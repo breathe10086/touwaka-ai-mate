@@ -2,7 +2,7 @@ import logger from '../../lib/logger.js';
 import { createTask, getTask } from '../../lib/ocr-tool-store.js';
 import { Sequelize } from 'sequelize';
 
-const MAX_IMAGE_BYTES = 1 * 1024 * 1024; // 1MB，避免超过nginx限制
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB，后端会自动压缩
 
 // Database connection for reading app config
 const sequelize = new Sequelize('touwaka_mate', 'touwaka', '123456', {

@@ -21,16 +21,18 @@
     </section>
 
     <section class="workspace">
-      <div class="panel upload-panel">
-        <header>
-          <h2>上传图片</h2>
-          <p>支持 JPG / PNG / JPEG / WEBP</p>
-        </header>
+      <el-card class="panel upload-panel">
+        <template #header>
+          <div class="panel-header">
+            <span>上传图片</span>
+            <span class="panel-hint">支持 JPG / PNG / JPEG / WEBP</span>
+          </div>
+        </template>
 
         <label class="dropzone" :class="{ filled: !!previewUrl }">
           <input type="file" accept="image/*" @change="handleFileChange" />
           <div v-if="!previewUrl" class="placeholder">
-            <span class="icon">🖼️</span>
+            <el-icon class="upload-icon"><Upload /></el-icon>
             <div>
               <strong>选择图片</strong>
               <p>或拖拽到此处</p>
@@ -41,47 +43,57 @@
 
         <div class="field">
           <label>输出格式</label>
-          <select v-model="selectedPresetId" class="preset-select">
-            <option v-for="preset in promptPresets" :key="preset.id" :value="preset.id">
-              {{ preset.label }}
-            </option>
-          </select>
+          <el-select v-model="selectedPresetId" class="preset-select" placeholder="选择输出格式">
+            <el-option
+              v-for="preset in promptPresets"
+              :key="preset.id"
+              :label="preset.label"
+              :value="preset.id"
+            />
+          </el-select>
         </div>
 
         <div class="actions">
-          <button class="btn primary" :disabled="isSubmitting || !previewUrl" @click="submit">
+          <el-button type="primary" :loading="isSubmitting" :disabled="!previewUrl" @click="submit">
             {{ isSubmitting ? '提交中...' : '开始识别' }}
-          </button>
-          <button class="btn ghost" :disabled="!previewUrl && !taskId" @click="reset">
+          </el-button>
+          <el-button :disabled="!previewUrl && !taskId" @click="reset">
             重置
-          </button>
+          </el-button>
         </div>
-      </div>
+      </el-card>
 
-      <div class="panel result-panel">
-        <header>
-          <h2>识别结果</h2>
-          <p v-if="taskId">任务 ID: <span class="mono">{{ taskId }}</span></p>
-        </header>
+      <el-card class="panel result-panel">
+        <template #header>
+          <div class="panel-header">
+            <span>识别结果</span>
+          </div>
+        </template>
 
         <div class="status-bar">
-          <span class="status" :class="statusClass">{{ statusLabel }}</span>
+          <el-tag :type="statusTagType" effect="plain">{{ statusLabel }}</el-tag>
           <div class="copy-buttons">
-            <button v-if="result" class="btn link" @click="copyAsExcel">复制为表格</button>
-            <button v-if="result" class="btn link" @click="copyResult">复制文本</button>
+            <el-button v-if="result && showCopyAsExcel" link type="primary" @click="copyAsExcel">复制为表格</el-button>
+            <el-button v-if="result" link type="primary" @click="copyResult">复制文本</el-button>
           </div>
         </div>
 
-        <div v-if="error" class="error-box">
-          {{ error }}
-        </div>
+        <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
 
-        <textarea
-          class="result-box"
-          :value="result"
-          placeholder="识别结果会显示在这里..."
-          readonly
-        ></textarea>
+        <div v-if="result" class="result-markdown" v-html="renderedResult"></div>
+        <div v-else class="result-placeholder">识别结果会显示在这里...</div>
+      </el-card>
+
+      <!-- 底部说明 -->
+      <div class="disclaimer">
+        <div class="disclaimer-item">
+          <el-icon><WarningFilled /></el-icon>
+          <span>识别结果不保存，请及时处理</span>
+        </div>
+        <div class="disclaimer-item">
+          <el-icon><InfoFilled /></el-icon>
+          <span>识别结果仅供参考，不保证完全准确，请人工校对后再使用</span>
+        </div>
       </div>
     </section>
   </div>
@@ -89,6 +101,9 @@
 
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { marked } from 'marked'
+import { ElMessage } from 'element-plus'
+import { Upload, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 
 const previewUrl = ref('')
@@ -139,7 +154,34 @@ const statusClass = computed(() => {
   }
 })
 
-const MAX_IMAGE_SIZE = 1 * 1024 * 1024 // 1MB，避免超过nginx限制
+const statusTagType = computed(() => {
+  switch (status.value) {
+    case 'pending': return 'info'
+    case 'processing': return 'warning'
+    case 'done': return 'success'
+    case 'error': return 'danger'
+    default: return 'info'
+  }
+})
+
+// 只有选择表格格式时才显示"复制为表格"按钮
+const showCopyAsExcel = computed(() => {
+  return selectedPresetId.value === 'table'
+})
+
+// 配置 marked 选项
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+})
+
+// 渲染 Markdown 结果
+const renderedResult = computed(() => {
+  if (!result.value) return ''
+  return marked.parse(result.value) as string
+})
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
 
 function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement
@@ -153,7 +195,7 @@ function handleFileChange(event: Event) {
 
   // Check file size
   if (file.size > MAX_IMAGE_SIZE) {
-    ElMessage.error('图片大小不能超过 1MB，请压缩后重试')
+    ElMessage.error('图片大小不能超过 5MB，请压缩后重试')
     return
   }
 
@@ -239,8 +281,26 @@ async function copyResult() {
 
 async function copyAsExcel() {
   try {
-    // Convert CSV to tab-separated for Excel
-    const tabSeparated = result.value.replace(/,/g, '\t')
+    // 把 Markdown 表格（|---| 格式）转换为 Tab 分割的格式
+    let tabSeparated = result.value
+    
+    // 匹配 Markdown 表格行：| 内容 | 内容 |
+    // 去掉 | 和 |，把剩余的 | 替换为 Tab
+    const lines = tabSeparated.split('\n')
+    const processedLines = lines.map(line => {
+      // 只处理包含 | 的行（表格行）
+      if (line.includes('|')) {
+        // 去掉首尾的 |，然后把中间的 | 替换为 Tab
+        let content = line.trim()
+        if (content.startsWith('|')) content = content.slice(1)
+        if (content.endsWith('|')) content = content.slice(0, -1)
+        // 把 | 替换为 Tab
+        return content.split('|').map(s => s.trim()).join('\t')
+      }
+      return line
+    })
+    
+    tabSeparated = processedLines.join('\n')
     await navigator.clipboard.writeText(tabSeparated)
   } catch {
     // 复制可能成功但抛出异常，忽略错误
@@ -311,45 +371,62 @@ onMounted(async () => {
 
 .workspace {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-rows: 1fr 1fr;
   gap: 20px;
   margin-top: 20px;
-  min-height: 600px;
+  min-height: 800px;
 }
 
 .panel {
-  background: #ffffff;
-  border-radius: 18px;
-  padding: 20px;
-  box-shadow: 0 10px 30px rgba(18, 24, 38, 0.08);
   animation: fadeIn 0.4s ease;
+}
+
+.panel-header {
   display: flex;
-  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
 }
 
-.panel header h2 {
-  margin: 0;
+.panel-header span:first-child {
   font-size: 18px;
+  font-weight: 600;
 }
 
-.panel header p {
-  margin: 6px 0 0;
-  color: #68738b;
+.panel-hint {
   font-size: 13px;
+  color: #909399;
+  font-weight: normal;
+}
+
+.task-id {
+  font-size: 12px;
+  color: #909399;
+  font-family: monospace;
 }
 
 .dropzone {
-  margin-top: 16px;
+  margin: 16px 0;
   display: flex;
   align-items: center;
   justify-content: center;
   border: 2px dashed #cdd7ef;
-  border-radius: 16px;
-  min-height: 350px;
+  border-radius: 8px;
+  width: 100%;
+  height: 350px;
   background: #f7f9ff;
   cursor: pointer;
   position: relative;
   overflow: hidden;
+  box-sizing: border-box;
+}
+
+.dropzone:hover {
+  border-color: #409eff;
+}
+
+.dropzone.filled {
+  border-style: solid;
+  border-color: #67c23a;
 }
 
 .dropzone input {
@@ -366,15 +443,27 @@ onMounted(async () => {
   background: #fff;
 }
 
-.placeholder {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #4b566b;
+.upload-icon {
+  font-size: 48px;
+  color: #909399;
 }
 
-.placeholder .icon {
-  font-size: 28px;
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #606266;
+}
+
+.placeholder strong {
+  font-size: 16px;
+}
+
+.placeholder p {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
 }
 
 .field {
@@ -384,65 +473,18 @@ onMounted(async () => {
 .field label {
   display: block;
   font-size: 13px;
-  color: #5a647a;
+  color: #606266;
   margin-bottom: 6px;
-}
-
-.field textarea {
-  width: 100%;
-  border-radius: 12px;
-  border: 1px solid #d9e1f7;
-  padding: 10px 12px;
-  font-family: inherit;
-  resize: vertical;
-  background: #fbfcff;
 }
 
 .preset-select {
   width: 100%;
-  border-radius: 12px;
-  border: 1px solid #d9e1f7;
-  padding: 10px 12px;
-  font-family: inherit;
-  font-size: 14px;
-  background: #fbfcff;
-  cursor: pointer;
-}
-
-.preset-select:focus {
-  outline: none;
-  border-color: #1f6bff;
 }
 
 .actions {
   display: flex;
   gap: 10px;
   margin-top: 16px;
-}
-
-.btn {
-  border: none;
-  border-radius: 999px;
-  padding: 10px 18px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.btn.primary {
-  background: #1f6bff;
-  color: #fff;
-}
-
-.btn.ghost {
-  background: #eef3ff;
-  color: #3055b5;
-}
-
-.btn.link {
-  background: transparent;
-  color: #1f6bff;
-  padding: 0;
 }
 
 .status-bar {
@@ -455,52 +497,123 @@ onMounted(async () => {
 
 .copy-buttons {
   display: flex;
-  gap: 12px;
-}
-
-.status {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  background: #eef3ff;
-  color: #3055b5;
-}
-
-.status.done {
-  background: #e6f8ef;
-  color: #1d7a4a;
-}
-
-.status.error {
-  background: #ffe9e9;
-  color: #c43f3f;
+  gap: 8px;
 }
 
 .result-box {
   width: 100%;
   flex: 1;
-  min-height: 350px;
-  border-radius: 14px;
-  border: 1px solid #e3e7f5;
+  min-height: 450px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  margin-top: 10px;
+}
+
+/* Markdown 渲染结果样式 */
+.result-markdown {
+  width: 100%;
+  flex: 1;
+  min-height: 450px;
+  margin-top: 10px;
   padding: 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  overflow-y: auto;
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
-  background: #fdfdff;
-  resize: none;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
-.error-box {
-  background: #fff2f2;
-  color: #b83232;
-  padding: 10px 12px;
-  border-radius: 10px;
-  margin-bottom: 10px;
-  flex-shrink: 0;
+.result-markdown :deep(h1),
+.result-markdown :deep(h2),
+.result-markdown :deep(h3),
+.result-markdown :deep(h4),
+.result-markdown :deep(h5),
+.result-markdown :deep(h6) {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
 }
 
-.mono {
+.result-markdown :deep(p) {
+  margin: 8px 0;
+}
+
+.result-markdown :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+}
+
+.result-markdown :deep(th),
+.result-markdown :deep(td) {
+  border: 1px solid #ddd;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.result-markdown :deep(th) {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+.result-markdown :deep(code) {
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 4px;
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+.result-markdown :deep(pre) {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.result-markdown :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.result-markdown :deep(ul),
+.result-markdown :deep(ol) {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.result-placeholder {
+  width: 100%;
+  flex: 1;
+  min-height: 450px;
+  margin-top: 10px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  color: #999;
+  font-size: 14px;
+}
+
+/* 底部说明样式 */
+.disclaimer {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8f9fc;
+  border-radius: 8px;
+  border: 1px solid #e8ecf0;
+}
+
+.disclaimer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.disclaimer-item .el-icon {
+  color: #909399;
+  font-size: 16px;
 }
 
 /* 复制成功浮窗样式 */
@@ -579,7 +692,7 @@ onMounted(async () => {
     align-self: center;
   }
   .workspace {
-    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
     min-height: auto;
   }
   .dropzone {
