@@ -111,7 +111,7 @@ const taskId = ref('')
 const status = ref<'idle' | 'pending' | 'processing' | 'done' | 'error'>('idle')
 const result = ref('')
 const promptPresets = ref<OcrPromptPreset[]>([])
-const selectedPresetId = ref('markdown')
+const selectedPresetId = ref('text')
 const error = ref('')
 const isSubmitting = ref(false)
 const showToast = ref(false)
@@ -142,15 +142,6 @@ const statusLabel = computed(() => {
     case 'done': return '已完成'
     case 'error': return '失败'
     default: return '等待上传'
-  }
-})
-
-const statusClass = computed(() => {
-  return {
-    pending: status.value === 'pending',
-    processing: status.value === 'processing',
-    done: status.value === 'done',
-    error: status.value === 'error',
   }
 })
 

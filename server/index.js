@@ -275,7 +275,7 @@ class ApiServer {
       appMarket: new AppMarketController(this.db),
       contractV2: new ContractV2Controller(this.db),
       invoice: new InvoiceController(this.db),
-      ocrTool: new OcrToolController(),
+      ocrTool: new OcrToolController(this.db),
     };
   }
 
