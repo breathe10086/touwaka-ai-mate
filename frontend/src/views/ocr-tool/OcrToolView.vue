@@ -1,0 +1,696 @@
+<template>
+  <div class="ocr-tool-page">
+    <!-- 复制成功浮窗 -->
+    <Teleport to="body">
+      <div v-if="showToast" class="toast-overlay" @click="closeToast">
+        <div class="toast-popup" @click.stop>
+          <span class="toast-icon">✓</span>
+          <span class="toast-message">复制成功</span>
+          <button class="toast-close" @click="closeToast">×</button>
+        </div>
+      </div>
+    </Teleport>
+
+    <section class="hero">
+      <div class="hero-text">
+        <p class="eyebrow">OCR TOOL</p>
+        <h1>把图片里的文字提出来</h1>
+        <p class="subhead">仅支持图片，不保存原图。上传后自动识别，结果可复制。</p>
+      </div>
+      <div class="hero-orb" aria-hidden="true"></div>
+    </section>
+
+    <section class="workspace">
+      <el-card class="panel upload-panel">
+        <template #header>
+          <div class="panel-header">
+            <span>上传图片</span>
+            <span class="panel-hint">支持 JPG / PNG / JPEG / WEBP</span>
+          </div>
+        </template>
+
+        <label class="dropzone" :class="{ filled: !!previewUrl }">
+          <input type="file" accept="image/*" @change="handleFileChange" />
+          <div v-if="!previewUrl" class="placeholder">
+            <el-icon class="upload-icon"><Upload /></el-icon>
+            <div>
+              <strong>选择图片</strong>
+              <p>或拖拽到此处</p>
+            </div>
+          </div>
+          <img v-else :src="previewUrl" alt="preview" />
+        </label>
+
+        <div class="field">
+          <label>输出格式</label>
+          <el-select v-model="selectedPresetId" class="preset-select" placeholder="选择输出格式">
+            <el-option
+              v-for="preset in promptPresets"
+              :key="preset.id"
+              :label="preset.label"
+              :value="preset.id"
+            />
+          </el-select>
+        </div>
+
+        <div class="actions">
+          <el-button type="primary" :loading="isSubmitting" :disabled="!previewUrl" @click="submit">
+            {{ isSubmitting ? '提交中...' : '开始识别' }}
+          </el-button>
+          <el-button :disabled="!previewUrl && !taskId" @click="reset">
+            重置
+          </el-button>
+        </div>
+      </el-card>
+
+      <el-card class="panel result-panel">
+        <template #header>
+          <div class="panel-header">
+            <span>识别结果</span>
+          </div>
+        </template>
+
+        <div class="status-bar">
+          <el-tag :type="statusTagType" effect="plain">{{ statusLabel }}</el-tag>
+          <div class="copy-buttons">
+            <el-button v-if="result && showCopyAsExcel" link type="primary" @click="copyAsExcel">复制为表格</el-button>
+            <el-button v-if="result" link type="primary" @click="copyResult">复制文本</el-button>
+          </div>
+        </div>
+
+        <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
+
+        <div v-if="result" class="result-markdown" v-html="renderedResult"></div>
+        <div v-else class="result-placeholder">识别结果会显示在这里...</div>
+      </el-card>
+
+      <!-- 底部说明 -->
+      <div class="disclaimer">
+        <div class="disclaimer-item">
+          <el-icon><WarningFilled /></el-icon>
+          <span>识别结果不保存，请及时处理</span>
+        </div>
+        <div class="disclaimer-item">
+          <el-icon><InfoFilled /></el-icon>
+          <span>识别结果仅供参考，不保证完全准确，请人工校对后再使用</span>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { marked } from 'marked'
+import { ElMessage } from 'element-plus'
+import { Upload, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
+import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
+
+const previewUrl = ref('')
+const taskId = ref('')
+const status = ref<'idle' | 'pending' | 'processing' | 'done' | 'error'>('idle')
+const result = ref('')
+const promptPresets = ref<OcrPromptPreset[]>([])
+const selectedPresetId = ref('text')
+const error = ref('')
+const isSubmitting = ref(false)
+const showToast = ref(false)
+
+let pollTimer: number | null = null
+let toastTimer: number | null = null
+
+function showCopySuccess() {
+  showToast.value = true
+  if (toastTimer) clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => {
+    showToast.value = false
+  }, 1500)
+}
+
+function closeToast() {
+  showToast.value = false
+  if (toastTimer) {
+    clearTimeout(toastTimer)
+    toastTimer = null
+  }
+}
+
+const statusLabel = computed(() => {
+  switch (status.value) {
+    case 'pending': return '排队中'
+    case 'processing': return '识别中'
+    case 'done': return '已完成'
+    case 'error': return '失败'
+    default: return '等待上传'
+  }
+})
+
+const statusTagType = computed(() => {
+  switch (status.value) {
+    case 'pending': return 'info'
+    case 'processing': return 'warning'
+    case 'done': return 'success'
+    case 'error': return 'danger'
+    default: return 'info'
+  }
+})
+
+// 只有选择表格格式时才显示"复制为表格"按钮
+const showCopyAsExcel = computed(() => {
+  return selectedPresetId.value === 'table'
+})
+
+// 配置 marked 选项
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+})
+
+// 渲染 Markdown 结果
+const renderedResult = computed(() => {
+  if (!result.value) return ''
+  return marked.parse(result.value) as string
+})
+
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
+
+function handleFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  if (!file.type.startsWith('image/')) {
+    ElMessage.error('请选择图片文件')
+    return
+  }
+
+  // Check file size
+  if (file.size > MAX_IMAGE_SIZE) {
+    ElMessage.error('图片大小不能超过 5MB，请压缩后重试')
+    return
+  }
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    previewUrl.value = String(reader.result || '')
+    result.value = ''
+    error.value = ''
+    status.value = 'idle'
+    taskId.value = ''
+  }
+  reader.readAsDataURL(file)
+}
+
+async function submit() {
+  if (!previewUrl.value) return
+  isSubmitting.value = true
+  error.value = ''
+  result.value = ''
+
+  // Get the prompt from selected preset
+  const selectedPreset = promptPresets.value.find(p => p.id === selectedPresetId.value)
+  const promptText = selectedPreset?.prompt || ''
+
+  try {
+    const res = await analyzeOcrImage(previewUrl.value, promptText)
+    taskId.value = res.task_id
+    status.value = res.status as typeof status.value
+    startPolling()
+  } catch (err: any) {
+    error.value = err?.message || '提交失败'
+    status.value = 'error'
+  } finally {
+    isSubmitting.value = false
+  }
+}
+
+function startPolling() {
+  stopPolling()
+  pollTimer = window.setInterval(async () => {
+    if (!taskId.value) return
+    try {
+      const res = await getOcrStatus(taskId.value)
+      status.value = res.status as typeof status.value
+      result.value = res.result || ''
+      error.value = res.error || ''
+      if (status.value === 'done' || status.value === 'error') {
+        stopPolling()
+      }
+    } catch (err: any) {
+      error.value = err?.message || '状态查询失败'
+      status.value = 'error'
+      stopPolling()
+    }
+  }, 2000)
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    window.clearInterval(pollTimer)
+    pollTimer = null
+  }
+}
+
+function reset() {
+  previewUrl.value = ''
+  taskId.value = ''
+  status.value = 'idle'
+  result.value = ''
+  error.value = ''
+  selectedPresetId.value = 'markdown'
+  stopPolling()
+}
+
+async function copyResult() {
+  try {
+    await navigator.clipboard.writeText(result.value)
+  } catch {
+    // 复制可能成功但抛出异常，忽略错误
+  }
+  showCopySuccess()
+}
+
+async function copyAsExcel() {
+  try {
+    // 把 Markdown 表格（|---| 格式）转换为 Tab 分割的格式
+    let tabSeparated = result.value
+    
+    // 匹配 Markdown 表格行：| 内容 | 内容 |
+    // 去掉 | 和 |，把剩余的 | 替换为 Tab
+    const lines = tabSeparated.split('\n')
+    const processedLines = lines.map(line => {
+      // 只处理包含 | 的行（表格行）
+      if (line.includes('|')) {
+        // 去掉首尾的 |，然后把中间的 | 替换为 Tab
+        let content = line.trim()
+        if (content.startsWith('|')) content = content.slice(1)
+        if (content.endsWith('|')) content = content.slice(0, -1)
+        // 把 | 替换为 Tab
+        return content.split('|').map(s => s.trim()).join('\t')
+      }
+      return line
+    })
+    
+    tabSeparated = processedLines.join('\n')
+    await navigator.clipboard.writeText(tabSeparated)
+  } catch {
+    // 复制可能成功但抛出异常，忽略错误
+  }
+  showCopySuccess()
+}
+
+onBeforeUnmount(() => stopPolling())
+
+onMounted(async () => {
+  try {
+    const res = await getOcrPromptPresets()
+    promptPresets.value = res.presets || []
+    selectedPresetId.value = res.defaultId || 'markdown'
+  } catch (err) {
+    console.error('Failed to load prompt presets:', err)
+  }
+})
+</script>
+
+<style scoped>
+.ocr-tool-page {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+  color: #1b1f2a;
+}
+
+.hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 28px;
+  border-radius: 20px;
+  background: radial-gradient(120% 120% at 0% 0%, #fff7e6 0%, #f7f1ff 35%, #eef6ff 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.hero-text h1 {
+  margin: 6px 0 12px;
+  font-size: 32px;
+  letter-spacing: -0.5px;
+}
+
+.eyebrow {
+  font-size: 12px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #7d6a5a;
+}
+
+.subhead {
+  margin: 0;
+  color: #4b566b;
+}
+
+.hero-orb {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: conic-gradient(from 180deg, #ffcf6f, #f3a6ff, #6fd3ff, #ffcf6f);
+  filter: blur(0.2px);
+  opacity: 0.8;
+}
+
+.workspace {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 20px;
+  margin-top: 20px;
+  min-height: 800px;
+}
+
+.panel {
+  animation: fadeIn 0.4s ease;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.panel-header span:first-child {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.panel-hint {
+  font-size: 13px;
+  color: #909399;
+  font-weight: normal;
+}
+
+.task-id {
+  font-size: 12px;
+  color: #909399;
+  font-family: monospace;
+}
+
+.dropzone {
+  margin: 16px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #cdd7ef;
+  border-radius: 8px;
+  width: 100%;
+  height: 350px;
+  background: #f7f9ff;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.dropzone:hover {
+  border-color: #409eff;
+}
+
+.dropzone.filled {
+  border-style: solid;
+  border-color: #67c23a;
+}
+
+.dropzone input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dropzone img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fff;
+}
+
+.upload-icon {
+  font-size: 48px;
+  color: #909399;
+}
+
+.placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: #606266;
+}
+
+.placeholder strong {
+  font-size: 16px;
+}
+
+.placeholder p {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+}
+
+.field {
+  margin-top: 16px;
+}
+
+.field label {
+  display: block;
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+
+.preset-select {
+  width: 100%;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0 8px;
+  flex-shrink: 0;
+}
+
+.copy-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.result-box {
+  width: 100%;
+  flex: 1;
+  min-height: 450px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  margin-top: 10px;
+}
+
+/* Markdown 渲染结果样式 */
+.result-markdown {
+  width: 100%;
+  flex: 1;
+  min-height: 450px;
+  margin-top: 10px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  overflow-y: auto;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.result-markdown :deep(h1),
+.result-markdown :deep(h2),
+.result-markdown :deep(h3),
+.result-markdown :deep(h4),
+.result-markdown :deep(h5),
+.result-markdown :deep(h6) {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.result-markdown :deep(p) {
+  margin: 8px 0;
+}
+
+.result-markdown :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+}
+
+.result-markdown :deep(th),
+.result-markdown :deep(td) {
+  border: 1px solid #ddd;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.result-markdown :deep(th) {
+  background: #f5f5f5;
+  font-weight: 600;
+}
+
+.result-markdown :deep(code) {
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
+}
+
+.result-markdown :deep(pre) {
+  background: #f5f5f5;
+  padding: 12px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.result-markdown :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+
+.result-markdown :deep(ul),
+.result-markdown :deep(ol) {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.result-placeholder {
+  width: 100%;
+  flex: 1;
+  min-height: 450px;
+  margin-top: 10px;
+  padding: 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  color: #999;
+  font-size: 14px;
+}
+
+/* 底部说明样式 */
+.disclaimer {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8f9fc;
+  border-radius: 8px;
+  border: 1px solid #e8ecf0;
+}
+
+.disclaimer-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #666;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.disclaimer-item .el-icon {
+  color: #909399;
+  font-size: 16px;
+}
+
+/* 复制成功浮窗样式 */
+.toast-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.toast-popup {
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  animation: toastIn 0.2s ease;
+}
+
+.toast-icon {
+  color: #22c55e;
+  font-size: 18px;
+  font-weight: bold;
+}
+
+.toast-message {
+  color: #1b1f2a;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.toast-close {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 0 0 12px;
+  line-height: 1;
+}
+
+.toast-close:hover {
+  color: #6b7280;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 720px) {
+  .hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .hero-orb {
+    align-self: center;
+  }
+  .workspace {
+    grid-template-rows: 1fr 1fr;
+    min-height: auto;
+  }
+  .dropzone {
+    min-height: 220px;
+  }
+  .result-box {
+    min-height: 220px;
+  }
+}
+</style>
