@@ -61,7 +61,7 @@
     <section class="hero">
       <div class="hero-left">
         <p class="eyebrow">OCR TOOL</p>
-        <h1>文本提取器</h1>
+        <h1><el-icon class="title-icon"><Camera /></el-icon> 文本提取器</h1>
       </div>
       <div class="hero-right">
         <span>支持 JPG/PNG/WEBP 图片，自动提取文字内容</span>
@@ -144,7 +144,7 @@
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { Upload, WarningFilled, InfoFilled, Setting, Loading } from '@element-plus/icons-vue'
+import { Upload, WarningFilled, InfoFilled, Setting, Loading, Camera } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
 import { modelApi } from '@/api/services'
@@ -459,6 +459,14 @@ onMounted(async () => {
   margin: 4px 0 0;
   font-size: 24px;
   letter-spacing: -0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-icon {
+  font-size: 24px;
+  color: #409eff;
 }
 
 .eyebrow {
