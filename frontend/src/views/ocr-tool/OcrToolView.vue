@@ -67,7 +67,6 @@
         <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
           <el-icon><Setting /></el-icon>
         </button>
-        <div class="hero-orb" aria-hidden="true"></div>
       </div>
     </section>
 
