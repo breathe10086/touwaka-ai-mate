@@ -45,7 +45,7 @@
       </div>
     </Teleport>
 
-    <!-- 识别中提示 -->
+<!-- 识别中提示 -->
     <Teleport to="body">
       <div v-if="isProcessing" class="processing-overlay">
         <div class="processing-modal">
