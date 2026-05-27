@@ -882,8 +882,8 @@ const MIGRATIONS = [
     migrate: async (conn) => {
       await conn.execute(`
         INSERT INTO system_settings (setting_key, setting_value, value_type, description) VALUES
-        ('app_market.registry_url', 'https://raw.githubusercontent.com/ErixWong/touwaka-ai-mate/main/apps', 'string', 'App Market Registry URL'),
-        ('app_market.registry_branch', 'main', 'string', 'Registry 分支'),
+        ('app_market.registry_url', 'https://raw.githubusercontent.com/ErixWong/touwaka-ai-mate/master/apps', 'string', 'App Market Registry URL'),
+        ('app_market.registry_branch', 'master', 'string', 'Registry 分支'),
         ('app_market.auto_check_updates', 'true', 'boolean', '是否自动检查更新'),
         ('app_market.check_interval_hours', '24', 'number', '自动检查间隔（小时）'),
         ('app_market.offline_mode', 'false', 'boolean', '离线模式'),
