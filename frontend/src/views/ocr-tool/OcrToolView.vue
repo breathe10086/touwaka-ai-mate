@@ -409,7 +409,7 @@ async function openConfigDialog() {
 async function saveConfig() {
   try {
     await updateAppConfig(appId, {
-      vlm_model_id: configData.value.vlm_model_id || null,
+      vlm_model_id: configData.value.vlm_model_id || undefined,
       vlm_temperature: configData.value.vlm_temperature,
       vlm_timeout_ms: configData.value.vlm_timeout_sec * 1000,
     })
