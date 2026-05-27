@@ -172,6 +172,13 @@ const isProcessing = ref(false)
 const pollingCount = ref(0)
 const elapsedTime = ref(0)
 const showToast = ref(false)
+const showConfigDialog = ref(false)
+const multimodalModels = ref<{ id: string; name: string }[]>([])
+const configData = ref({
+  vlm_model_id: '',
+  vlm_temperature: 0.2,
+  vlm_timeout_sec: 120,
+})
 
 let pollTimer: number | null = null
 let toastTimer: number | null = null
