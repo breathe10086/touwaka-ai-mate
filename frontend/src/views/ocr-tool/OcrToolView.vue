@@ -119,6 +119,7 @@
         <template #header>
           <div class="panel-header">
             <span>识别结果</span>
+            <span v-if="elapsedTime > 0" class="elapsed-time">用时 {{ elapsedTime }} 秒</span>
           </div>
         </template>
 
@@ -527,6 +528,12 @@ onMounted(async () => {
   font-size: 13px;
   color: #909399;
   font-weight: normal;
+}
+
+.elapsed-time {
+  font-size: 13px;
+  color: #67c23a;
+  font-weight: 500;
 }
 
 .task-id {
