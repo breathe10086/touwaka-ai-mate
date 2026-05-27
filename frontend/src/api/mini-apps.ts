@@ -77,6 +77,9 @@ export interface AppConfig {
     section?: string
   }
   extension_tables?: ExtensionTable[]
+  vlm_model_id?: string
+  vlm_temperature?: number
+  vlm_timeout_ms?: number
 }
 
 export interface StepResourceConfig {
