@@ -59,15 +59,17 @@
     </Teleport>
 
     <section class="hero">
-      <div class="hero-text">
+      <div class="hero-left">
         <p class="eyebrow">OCR TOOL</p>
         <h1>文本提取器</h1>
       </div>
-      <div class="hero-actions">
-        <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
-          <el-icon><Setting /></el-icon>
-        </button>
+      <div class="hero-right">
+        <span>仅支持图片，不保存原图。上传后自动识别，结果可复制。</span>
+        <span>识别结果仅供参考，请人工校对后再使用。</span>
       </div>
+      <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
+        <el-icon><Setting /></el-icon>
+      </button>
     </section>
 
     <section class="workspace">
@@ -135,21 +137,6 @@
         <div v-else class="result-placeholder">识别结果会显示在这里...</div>
       </el-card>
     </section>
-
-    <!-- 底部说明 -->
-    <div class="disclaimer">
-      <div class="disclaimer-item">
-        <span>仅支持图片，不保存原图。上传后自动识别，结果可复制。</span>
-      </div>
-      <div class="disclaimer-item">
-        <el-icon><WarningFilled /></el-icon>
-        <span>识别结果不保存，请及时处理</span>
-      </div>
-      <div class="disclaimer-item">
-        <el-icon><InfoFilled /></el-icon>
-        <span>识别结果仅供参考，不保证完全准确，请人工校对后再使用</span>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -459,38 +446,59 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 28px;
-  border-radius: 20px;
-  background: radial-gradient(120% 120% at 0% 0%, #fff7e6 0%, #f7f1ff 35%, #eef6ff 100%);
-  position: relative;
-  overflow: hidden;
+  padding: 16px 24px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f7f1ff 0%, #eef6ff 100%);
 }
 
-.hero-text h1 {
-  margin: 6px 0 12px;
-  font-size: 32px;
+.hero-left {
+  flex: 0 0 auto;
+}
+
+.hero-left h1 {
+  margin: 4px 0 0;
+  font-size: 24px;
   letter-spacing: -0.5px;
 }
 
 .eyebrow {
-  font-size: 12px;
-  letter-spacing: 2px;
+  font-size: 11px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: #7d6a5a;
-}
-
-.subhead {
   margin: 0;
-  color: #4b566b;
 }
 
-.hero-orb {
-  width: 140px;
-  height: 140px;
+.hero-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #666;
+  font-size: 13px;
+}
+
+.config-btn {
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
   border-radius: 50%;
-  background: conic-gradient(from 180deg, #ffcf6f, #f3a6ff, #6fd3ff, #ffcf6f);
-  filter: blur(0.2px);
-  opacity: 0.8;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.config-btn:hover {
+  background: #fff;
+  transform: scale(1.1);
+}
+
+.config-btn .el-icon {
+  font-size: 18px;
+  color: #4b566b;
 }
 
 .workspace {
@@ -842,9 +850,10 @@ onMounted(async () => {
   .hero {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
   }
-  .hero-orb {
-    align-self: center;
+  .hero-right {
+    flex-direction: column;
   }
   .dropzone {
     min-height: 220px;
@@ -854,35 +863,7 @@ onMounted(async () => {
   }
 }
 
-/* 配置按钮和对话框 */
-.hero-actions {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.config-btn {
-  background: rgba(255, 255, 255, 0.8);
-  border: none;
-  border-radius: 50%;
-  width: 40px;
-  height: 40px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.2s;
-}
-
-.config-btn:hover {
-  background: rgba(255, 255, 255, 1);
-  transform: scale(1.1);
-}
-
-.config-btn .el-icon {
-  font-size: 20px;
-  color: #4b566b;
-}
+/* 配置对话框 */
 
 .config-overlay {
   position: fixed;
