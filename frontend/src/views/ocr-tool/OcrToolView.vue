@@ -61,8 +61,7 @@
     <section class="hero">
       <div class="hero-text">
         <p class="eyebrow">OCR TOOL</p>
-        <h1>把图片里的文字提出来</h1>
-        <p class="subhead">仅支持图片，不保存原图。上传后自动识别，结果可复制。</p>
+        <h1>文本提取器</h1>
       </div>
       <div class="hero-actions">
         <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
@@ -140,6 +139,9 @@
 
     <!-- 底部说明 -->
     <div class="disclaimer">
+      <div class="disclaimer-item">
+        <span>仅支持图片，不保存原图。上传后自动识别，结果可复制。</span>
+      </div>
       <div class="disclaimer-item">
         <el-icon><WarningFilled /></el-icon>
         <span>识别结果不保存，请及时处理</span>
