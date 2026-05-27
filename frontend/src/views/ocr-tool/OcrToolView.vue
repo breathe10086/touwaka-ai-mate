@@ -169,7 +169,12 @@ marked.setOptions({
 // 渲染 Markdown 结果
 const renderedResult = computed(() => {
   if (!result.value) return ''
-  return marked.parse(result.value) as string
+  
+  // 去掉 VLM 返回的代码块标记 ```markdown 和 ```
+  let text = result.value
+  text = text.replace(/^```markdown\s*/g, '').replace(/```$/g, '').trim()
+  
+  return marked.parse(text) as string
 })
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
@@ -272,11 +277,11 @@ async function copyResult() {
 
 async function copyAsExcel() {
   try {
-    // 把 Markdown 表格（|---| 格式）转换为 Tab 分割的格式
+    // 去掉 VLM 返回的代码块标记 ```markdown 和 ```
     let tabSeparated = result.value
+    tabSeparated = tabSeparated.replace(/^```markdown\s*/g, '').replace(/```$/g, '').trim()
     
-    // 匹配 Markdown 表格行：| 内容 | 内容 |
-    // 去掉 | 和 |，把剩余的 | 替换为 Tab
+    // 把 Markdown 表格（|---| 格式）转换为 Tab 分割的格式
     const lines = tabSeparated.split('\n')
     const processedLines = lines.map(line => {
       // 只处理包含 | 的行（表格行）
@@ -361,11 +366,19 @@ onMounted(async () => {
 }
 
 .workspace {
-  display: grid;
-  grid-template-rows: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 20px;
   margin-top: 20px;
-  min-height: 800px;
+}
+
+.upload-panel {
+  flex-shrink: 0;
+}
+
+.result-panel {
+  flex: 1;
+  min-height: 300px;
 }
 
 .panel {
