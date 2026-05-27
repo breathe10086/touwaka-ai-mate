@@ -1046,7 +1046,10 @@ const MIGRATIONS = [
   // Issue #654: 章节结构存储
   {
     name: 'app_contract_mgr_content add sections column',
-    check: async (conn) => await hasColumn(conn, 'app_contract_mgr_content', 'sections'),
+    check: async (conn) => {
+      if (!await hasTable(conn, 'app_contract_mgr_content')) return true;
+      return await hasColumn(conn, 'app_contract_mgr_content', 'sections');
+    },
     migrate: async (conn) => {
       await conn.execute(`
         ALTER TABLE app_contract_mgr_content
@@ -1060,7 +1063,10 @@ const MIGRATIONS = [
   // Issue #665: 合同管理乙方字段持久化
   {
     name: 'app_contract_mgr_rows add party_b column',
-    check: async (conn) => await hasColumn(conn, 'app_contract_mgr_rows', 'party_b'),
+    check: async (conn) => {
+      if (!await hasTable(conn, 'app_contract_mgr_rows')) return true;
+      return await hasColumn(conn, 'app_contract_mgr_rows', 'party_b');
+    },
     migrate: async (conn) => {
       await conn.execute(`
         ALTER TABLE app_contract_mgr_rows
@@ -1179,7 +1185,10 @@ const MIGRATIONS = [
   // Issue #693: content 表新增状态字段，移除 mini_app_rows 依赖
   {
     name: 'app_contract_mgr_v2_content add process_step',
-    check: async (conn) => await hasColumn(conn, 'app_contract_mgr_v2_content', 'process_step'),
+    check: async (conn) => {
+      if (!await hasTable(conn, 'app_contract_mgr_v2_content')) return true;
+      return await hasColumn(conn, 'app_contract_mgr_v2_content', 'process_step');
+    },
     migrate: async (conn) => {
       await conn.execute(`
         ALTER TABLE app_contract_mgr_v2_content
@@ -1242,6 +1251,7 @@ const MIGRATIONS = [
   {
     name: 'app_contract_mgr_v2_content extend ocr_task_id',
     check: async (conn) => {
+      if (!await hasTable(conn, 'app_contract_mgr_v2_content')) return true;
       const [rows] = await conn.execute(`
         SELECT CHARACTER_MAXIMUM_LENGTH FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE() 
