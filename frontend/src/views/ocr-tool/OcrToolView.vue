@@ -52,7 +52,7 @@
         <p class="subhead">仅支持图片，不保存原图。上传后自动识别，结果可复制。</p>
       </div>
       <div class="hero-actions">
-        <button class="config-btn" @click="openConfigDialog" title="配置">
+        <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
           <el-icon><Setting /></el-icon>
         </button>
         <div class="hero-orb" aria-hidden="true"></div>
@@ -147,10 +147,14 @@ import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPrese
 import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
 import { useRoute } from 'vue-router'
 import { useToastStore } from '@/stores/toast'
+import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const toast = useToastStore()
+const userStore = useUserStore()
 const appId = route.params.appId as string
+
+const isAdmin = computed(() => userStore.isAdmin)
 
 const previewUrl = ref('')
 const taskId = ref('')
