@@ -45,6 +45,19 @@
       </div>
     </Teleport>
 
+    <!-- 识别中提示 -->
+    <Teleport to="body">
+      <div v-if="isProcessing" class="processing-overlay">
+        <div class="processing-modal">
+          <div class="processing-spinner">
+            <el-icon class="spin-icon"><Loading /></el-icon>
+          </div>
+          <p class="processing-text">识别中，请稍候 <span class="processing-time">{{ elapsedTime }}s</span></p>
+          <p class="processing-dots">{{ pollingDots }}</p>
+        </div>
+      </div>
+    </Teleport>
+
     <section class="hero">
       <div class="hero-text">
         <p class="eyebrow">OCR TOOL</p>
@@ -142,7 +155,7 @@
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { Upload, WarningFilled, InfoFilled, Setting } from '@element-plus/icons-vue'
+import { Upload, WarningFilled, InfoFilled, Setting, Loading } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
 import { modelApi } from '@/api/services'
@@ -156,6 +169,7 @@ const userStore = useUserStore()
 const appId = route.params.appId as string
 
 const isAdmin = computed(() => userStore.isAdmin)
+const pollingDots = computed(() => '.'.repeat(Math.min(pollingCount.value, 6)))
 
 const previewUrl = ref('')
 const taskId = ref('')
@@ -165,17 +179,14 @@ const promptPresets = ref<OcrPromptPreset[]>([])
 const selectedPresetId = ref('text')
 const error = ref('')
 const isSubmitting = ref(false)
+const isProcessing = ref(false)
+const pollingCount = ref(0)
+const elapsedTime = ref(0)
 const showToast = ref(false)
-const showConfigDialog = ref(false)
-const multimodalModels = ref<{ id: string; name: string }[]>([])
-const configData = ref({
-  vlm_model_id: '',
-  vlm_temperature: 0.2,
-  vlm_timeout_sec: 120,
-})
 
 let pollTimer: number | null = null
 let toastTimer: number | null = null
+let elapsedTimer: number | null = null
 
 function showCopySuccess() {
   showToast.value = true
@@ -267,8 +278,16 @@ function handleFileChange(event: Event) {
 async function submit() {
   if (!previewUrl.value) return
   isSubmitting.value = true
+  isProcessing.value = true
+  pollingCount.value = 0
+  elapsedTime.value = 0
   error.value = ''
   result.value = ''
+
+  // 启动计时器
+  elapsedTimer = window.setInterval(() => {
+    elapsedTime.value++
+  }, 1000)
 
   // Get the prompt from selected preset
   const selectedPreset = promptPresets.value.find(p => p.id === selectedPresetId.value)
@@ -282,8 +301,17 @@ async function submit() {
   } catch (err: any) {
     error.value = err?.message || '提交失败'
     status.value = 'error'
+    stopPolling()
+    stopElapsedTimer()
   } finally {
     isSubmitting.value = false
+  }
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    window.clearInterval(elapsedTimer)
+    elapsedTimer = null
   }
 }
 
@@ -291,6 +319,7 @@ function startPolling() {
   stopPolling()
   pollTimer = window.setInterval(async () => {
     if (!taskId.value) return
+    pollingCount.value++
     try {
       const res = await getOcrStatus(taskId.value)
       status.value = res.status as typeof status.value
@@ -298,11 +327,15 @@ function startPolling() {
       error.value = res.error || ''
       if (status.value === 'done' || status.value === 'error') {
         stopPolling()
+        stopElapsedTimer()
+        isProcessing.value = false
       }
     } catch (err: any) {
       error.value = err?.message || '状态查询失败'
       status.value = 'error'
       stopPolling()
+      stopElapsedTimer()
+      isProcessing.value = false
     }
   }, 2000)
 }
@@ -362,7 +395,10 @@ async function copyAsExcel() {
   showCopySuccess()
 }
 
-onBeforeUnmount(() => stopPolling())
+onBeforeUnmount(() => {
+  stopPolling()
+  stopElapsedTimer()
+})
 
 async function openConfigDialog() {
   try {
@@ -900,5 +936,60 @@ onMounted(async () => {
   gap: 12px;
   padding: 16px 24px;
   border-top: 1px solid #eee;
+}
+
+/* 识别中提示 */
+.processing-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.processing-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 48px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.processing-spinner {
+  margin-bottom: 16px;
+}
+
+.spin-icon {
+  font-size: 48px;
+  color: #409eff;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.processing-text {
+  font-size: 18px;
+  color: #333;
+  margin: 0 0 8px 0;
+}
+
+.processing-time {
+  font-weight: 600;
+  color: #409eff;
+}
+
+.processing-dots {
+  font-size: 24px;
+  color: #409eff;
+  margin: 0;
+  letter-spacing: 4px;
 }
 </style>
