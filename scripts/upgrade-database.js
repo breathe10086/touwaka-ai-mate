@@ -1286,6 +1286,23 @@ const MIGRATIONS = [
     }
   },
 
+  // 补录 ocr-tool 的 component 字段（安装时未写入）
+  {
+    name: 'mini_apps ocr-tool set component',
+    check: async (conn) => {
+      const [rows] = await conn.execute(`
+        SELECT component FROM mini_apps WHERE id = 'ocr-tool'
+      `);
+      return rows.length > 0 && rows[0].component === 'OcrToolView';
+    },
+    migrate: async (conn) => {
+      await conn.execute(`
+        UPDATE mini_apps SET component = 'OcrToolView' WHERE id = 'ocr-tool'
+      `);
+      console.log('  ✓ Set ocr-tool component to OcrToolView');
+    }
+  },
+
 ];
 
 /**
