@@ -368,10 +368,27 @@ class AppMarketService {
   /**
    * 拉取迁移脚本
    */
+  async fetchLocalMigration(appId, scriptPath) {
+    if (scriptPath.includes('..')) {
+      throw new Error(`Security: invalid migration script path ${scriptPath}`);
+    }
+    const fullPath = path.join(this.appsDir, appId, scriptPath);
+    const normalizedPath = path.normalize(fullPath);
+    if (!normalizedPath.startsWith(path.normalize(this.appsDir))) {
+      throw new Error(`Security: migration script path out of bounds`);
+    }
+    return await fs.readFile(normalizedPath, 'utf-8');
+  }
+
   async fetchMigration(appId, scriptPath) {
     const config = await this.getRegistryConfig();
-    const url = `${config.registry_url}/${appId}/${scriptPath}`;
     
+    if (config.offline_mode) {
+      logger.info(`Offline mode: reading local migration ${scriptPath} for ${appId}`);
+      return await this.fetchLocalMigration(appId, scriptPath);
+    }
+    
+    const url = `${config.registry_url}/${appId}/${scriptPath}`;
     logger.info(`Fetching migration ${scriptPath} for ${appId}`);
     
     try {
@@ -383,8 +400,13 @@ class AppMarketService {
       
       return await response.text();
     } catch (error) {
-      logger.error(`Failed to fetch migration ${scriptPath}:`, error);
-      throw error;
+      logger.warn(`Remote migration failed for ${scriptPath}, fallback to local:`, error.message);
+      try {
+        return await this.fetchLocalMigration(appId, scriptPath);
+      } catch (localError) {
+        logger.error(`Migration ${scriptPath} not found locally:`, localError.message);
+        throw error;
+      }
     }
   }
 
