@@ -875,9 +875,11 @@ const MIGRATIONS = [
     name: 'app_market system_settings seed',
     check: async (conn) => {
       const [rows] = await conn.execute(
-        "SELECT COUNT(*) as cnt FROM system_settings WHERE setting_key = 'app_market.registry_url'"
+        "SELECT setting_value FROM system_settings WHERE setting_key = 'app_market.registry_url'"
       );
-      return rows[0].cnt > 0;
+      if (rows.length === 0) return false;
+      const correctUrl = 'https://raw.githubusercontent.com/ErixWong/touwaka-ai-mate/master/apps';
+      return rows[0].setting_value === correctUrl;
     },
     migrate: async (conn) => {
       await conn.execute(`
