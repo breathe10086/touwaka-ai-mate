@@ -145,6 +145,7 @@ import { ElMessage } from 'element-plus'
 import { Upload, WarningFilled, InfoFilled, Setting } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
+import { modelApi } from '@/api/services'
 import { useRoute } from 'vue-router'
 import { useToastStore } from '@/stores/toast'
 import { useUserStore } from '@/stores/user'
@@ -372,11 +373,8 @@ async function openConfigDialog() {
       vlm_timeout_sec: Math.floor((config.vlm_timeout_ms ?? 120000) / 1000),
     }
     // 加载可用的 multimodal 模型列表
-    const modelsRes = await fetch('/api/internal/models?type=multimodal')
-    if (modelsRes.ok) {
-      const models = await modelsRes.json()
-      multimodalModels.value = models.data || []
-    }
+    const models = await modelApi.getModels()
+    multimodalModels.value = models.filter(m => m.model_type === 'multimodal').map(m => ({ id: m.id, name: m.name }))
   } catch (err) {
     console.error('Failed to load config:', err)
   }
