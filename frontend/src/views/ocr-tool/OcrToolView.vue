@@ -135,19 +135,19 @@
         <div v-if="result" class="result-markdown" v-html="renderedResult"></div>
         <div v-else class="result-placeholder">识别结果会显示在这里...</div>
       </el-card>
-
-      <!-- 底部说明 -->
-      <div class="disclaimer">
-        <div class="disclaimer-item">
-          <el-icon><WarningFilled /></el-icon>
-          <span>识别结果不保存，请及时处理</span>
-        </div>
-        <div class="disclaimer-item">
-          <el-icon><InfoFilled /></el-icon>
-          <span>识别结果仅供参考，不保证完全准确，请人工校对后再使用</span>
-        </div>
-      </div>
     </section>
+
+    <!-- 底部说明 -->
+    <div class="disclaimer">
+      <div class="disclaimer-item">
+        <el-icon><WarningFilled /></el-icon>
+        <span>识别结果不保存，请及时处理</span>
+      </div>
+      <div class="disclaimer-item">
+        <el-icon><InfoFilled /></el-icon>
+        <span>识别结果仅供参考，不保证完全准确，请人工校对后再使用</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -445,7 +445,8 @@ onMounted(async () => {
 <style scoped>
 .ocr-tool-page {
   padding: 24px;
-  max-width: 1200px;
+  width: 80%;
+  max-width: 1400px;
   margin: 0 auto;
   font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
   color: #1b1f2a;
@@ -492,18 +493,19 @@ onMounted(async () => {
 
 .workspace {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 20px;
   margin-top: 20px;
 }
 
 .upload-panel {
-  flex-shrink: 0;
+  flex: 0 0 40%;
+  min-width: 300px;
 }
 
 .result-panel {
   flex: 1;
-  min-height: 300px;
+  min-width: 400px;
 }
 
 .panel {
@@ -812,6 +814,22 @@ onMounted(async () => {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (max-width: 900px) {
+  .ocr-tool-page {
+    width: 95%;
+  }
+  .workspace {
+    flex-direction: column;
+  }
+  .upload-panel {
+    flex: none;
+    min-width: auto;
+  }
+  .result-panel {
+    min-width: auto;
+  }
+}
+
 @media (max-width: 720px) {
   .hero {
     flex-direction: column;
@@ -819,10 +837,6 @@ onMounted(async () => {
   }
   .hero-orb {
     align-self: center;
-  }
-  .workspace {
-    grid-template-rows: 1fr 1fr;
-    min-height: auto;
   }
   .dropzone {
     min-height: 220px;
