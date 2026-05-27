@@ -11,13 +11,52 @@
       </div>
     </Teleport>
 
+    <!-- 配置对话框 -->
+    <Teleport to="body">
+      <div v-if="showConfigDialog" class="config-overlay" @click.self="showConfigDialog = false">
+        <div class="config-dialog">
+          <div class="config-header">
+            <h3>OCR 配置</h3>
+            <button class="btn-close" @click="showConfigDialog = false">×</button>
+          </div>
+          <div class="config-body">
+            <div class="config-field">
+              <label>VLM 模型</label>
+              <el-select v-model="configData.vlm_model_id" clearable placeholder="自动选择">
+                <el-option v-for="m in multimodalModels" :key="m.id" :value="m.id" :label="m.name" />
+              </el-select>
+              <span class="hint">未选择时自动使用第一个可用的多模态模型</span>
+            </div>
+            <div class="config-field">
+              <label>识别温度</label>
+              <el-slider v-model="configData.vlm_temperature" :min="0" :max="1" :step="0.1" show-input />
+              <span class="hint">较低值输出更稳定，较高值更有创意</span>
+            </div>
+            <div class="config-field">
+              <label>超时时间 (秒)</label>
+              <el-input-number v-model="configData.vlm_timeout_sec" :min="30" :max="300" :step="10" />
+            </div>
+          </div>
+          <div class="config-footer">
+            <el-button @click="showConfigDialog = false">取消</el-button>
+            <el-button type="primary" @click="saveConfig">保存</el-button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
+
     <section class="hero">
       <div class="hero-text">
         <p class="eyebrow">OCR TOOL</p>
         <h1>把图片里的文字提出来</h1>
         <p class="subhead">仅支持图片，不保存原图。上传后自动识别，结果可复制。</p>
       </div>
-      <div class="hero-orb" aria-hidden="true"></div>
+      <div class="hero-actions">
+        <button class="config-btn" @click="openConfigDialog" title="配置">
+          <el-icon><Setting /></el-icon>
+        </button>
+        <div class="hero-orb" aria-hidden="true"></div>
+      </div>
     </section>
 
     <section class="workspace">
@@ -103,8 +142,15 @@
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { Upload, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
+import { Upload, WarningFilled, InfoFilled, Setting } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
+import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
+import { useRoute } from 'vue-router'
+import { useToastStore } from '@/stores/toast'
+
+const route = useRoute()
+const toast = useToastStore()
+const appId = route.params.appId as string
 
 const previewUrl = ref('')
 const taskId = ref('')
@@ -115,6 +161,13 @@ const selectedPresetId = ref('text')
 const error = ref('')
 const isSubmitting = ref(false)
 const showToast = ref(false)
+const showConfigDialog = ref(false)
+const multimodalModels = ref<{ id: string; name: string }[]>([])
+const configData = ref({
+  vlm_model_id: '',
+  vlm_temperature: 0.2,
+  vlm_timeout_sec: 120,
+})
 
 let pollTimer: number | null = null
 let toastTimer: number | null = null
@@ -305,6 +358,40 @@ async function copyAsExcel() {
 }
 
 onBeforeUnmount(() => stopPolling())
+
+async function openConfigDialog() {
+  try {
+    const config = await getAppConfig(appId)
+    configData.value = {
+      vlm_model_id: config.vlm_model_id || '',
+      vlm_temperature: config.vlm_temperature ?? 0.2,
+      vlm_timeout_sec: Math.floor((config.vlm_timeout_ms ?? 120000) / 1000),
+    }
+    // 加载可用的 multimodal 模型列表
+    const modelsRes = await fetch('/api/internal/models?type=multimodal')
+    if (modelsRes.ok) {
+      const models = await modelsRes.json()
+      multimodalModels.value = models.data || []
+    }
+  } catch (err) {
+    console.error('Failed to load config:', err)
+  }
+  showConfigDialog.value = true
+}
+
+async function saveConfig() {
+  try {
+    await updateAppConfig(appId, {
+      vlm_model_id: configData.value.vlm_model_id || null,
+      vlm_temperature: configData.value.vlm_temperature,
+      vlm_timeout_ms: configData.value.vlm_timeout_sec * 1000,
+    })
+    toast.success('配置已保存')
+    showConfigDialog.value = false
+  } catch (err: any) {
+    toast.error('保存失败: ' + err.message)
+  }
+}
 
 onMounted(async () => {
   try {
@@ -705,5 +792,111 @@ onMounted(async () => {
   .result-box {
     min-height: 220px;
   }
+}
+
+/* 配置按钮和对话框 */
+.hero-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.config-btn {
+  background: rgba(255, 255, 255, 0.8);
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.config-btn:hover {
+  background: rgba(255, 255, 255, 1);
+  transform: scale(1.1);
+}
+
+.config-btn .el-icon {
+  font-size: 20px;
+  color: #4b566b;
+}
+
+.config-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.config-dialog {
+  background: #fff;
+  border-radius: 16px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #eee;
+}
+
+.config-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.btn-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+}
+
+.config-body {
+  padding: 24px;
+}
+
+.config-field {
+  margin-bottom: 20px;
+}
+
+.config-field label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.config-field .el-select {
+  width: 100%;
+}
+
+.config-field .hint {
+  display: block;
+  font-size: 12px;
+  color: #999;
+  margin-top: 6px;
+}
+
+.config-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #eee;
 }
 </style>
