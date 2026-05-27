@@ -678,16 +678,26 @@ onMounted(async () => {
 /* Markdown 渲染结果样式 */
 .result-markdown {
   width: 100%;
-  flex: 1;
-  min-height: 450px;
+  max-height: 500px;
+  overflow-y: auto;
   margin-top: 10px;
   padding: 12px;
   background: #fafafa;
   border-radius: 8px;
-  overflow-y: auto;
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.result-placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 14px;
 }
 
 .result-markdown :deep(h1),
