@@ -11,13 +11,65 @@
       </div>
     </Teleport>
 
-    <section class="hero">
-      <div class="hero-text">
-        <p class="eyebrow">OCR TOOL</p>
-        <h1>把图片里的文字提出来</h1>
-        <p class="subhead">仅支持图片，不保存原图。上传后自动识别，结果可复制。</p>
+    <!-- 配置对话框 -->
+    <Teleport to="body">
+      <div v-if="showConfigDialog" class="config-overlay" @click.self="showConfigDialog = false">
+        <div class="config-dialog">
+          <div class="config-header">
+            <h3>OCR 配置</h3>
+            <button class="btn-close" @click="showConfigDialog = false">×</button>
+          </div>
+          <div class="config-body">
+            <div class="config-field">
+              <label>VLM 模型</label>
+              <el-select v-model="configData.vlm_model_id" clearable placeholder="自动选择">
+                <el-option v-for="m in multimodalModels" :key="m.id" :value="m.id" :label="m.name" />
+              </el-select>
+              <span class="hint">未选择时自动使用第一个可用的多模态模型</span>
+            </div>
+            <div class="config-field">
+              <label>识别温度</label>
+              <el-slider v-model="configData.vlm_temperature" :min="0" :max="1" :step="0.1" show-input />
+              <span class="hint">较低值输出更稳定，较高值更有创意</span>
+            </div>
+            <div class="config-field">
+              <label>超时时间 (秒)</label>
+              <el-input-number v-model="configData.vlm_timeout_sec" :min="30" :max="300" :step="10" />
+            </div>
+          </div>
+          <div class="config-footer">
+            <el-button @click="showConfigDialog = false">取消</el-button>
+            <el-button type="primary" @click="saveConfig">保存</el-button>
+          </div>
+        </div>
       </div>
-      <div class="hero-orb" aria-hidden="true"></div>
+    </Teleport>
+
+<!-- 识别中提示 -->
+    <Teleport to="body">
+      <div v-if="isProcessing" class="processing-overlay">
+        <div class="processing-modal">
+          <div class="processing-spinner">
+            <el-icon class="spin-icon"><Loading /></el-icon>
+          </div>
+          <p class="processing-text">识别中，请稍候 <span class="processing-time">{{ elapsedTime }}s</span></p>
+          <p class="processing-dots">{{ pollingDots }}</p>
+        </div>
+      </div>
+    </Teleport>
+
+    <section class="hero">
+      <div class="hero-left">
+        <p class="eyebrow">OCR TOOL</p>
+        <h1><el-icon class="title-icon"><Camera /></el-icon> 文本提取器</h1>
+      </div>
+      <div class="hero-right">
+        <span>支持 JPG/PNG/WEBP 图片，自动提取文字内容</span>
+        <span class="hint-text">不记录识别历史，请及时保存 · 识别结果仅供参考</span>
+      </div>
+      <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
+        <el-icon><Setting /></el-icon>
+      </button>
     </section>
 
     <section class="workspace">
@@ -67,34 +119,16 @@
         <template #header>
           <div class="panel-header">
             <span>识别结果</span>
+            <span v-if="elapsedTime > 0" class="elapsed-time">用时 {{ elapsedTime }} 秒</span>
+            <el-button v-if="result" link type="primary" size="small" @click="copyResult">复制文本</el-button>
           </div>
         </template>
-
-        <div class="status-bar">
-          <el-tag :type="statusTagType" effect="plain">{{ statusLabel }}</el-tag>
-          <div class="copy-buttons">
-            <el-button v-if="result && showCopyAsExcel" link type="primary" @click="copyAsExcel">复制为表格</el-button>
-            <el-button v-if="result" link type="primary" @click="copyResult">复制文本</el-button>
-          </div>
-        </div>
 
         <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
 
         <div v-if="result" class="result-markdown" v-html="renderedResult"></div>
         <div v-else class="result-placeholder">识别结果会显示在这里...</div>
       </el-card>
-
-      <!-- 底部说明 -->
-      <div class="disclaimer">
-        <div class="disclaimer-item">
-          <el-icon><WarningFilled /></el-icon>
-          <span>识别结果不保存，请及时处理</span>
-        </div>
-        <div class="disclaimer-item">
-          <el-icon><InfoFilled /></el-icon>
-          <span>识别结果仅供参考，不保证完全准确，请人工校对后再使用</span>
-        </div>
-      </div>
     </section>
   </div>
 </template>
@@ -103,8 +137,21 @@
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { Upload, WarningFilled, InfoFilled } from '@element-plus/icons-vue'
+import { Upload, WarningFilled, InfoFilled, Setting, Loading, Camera } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
+import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
+import { modelApi } from '@/api/services'
+import { useRoute } from 'vue-router'
+import { useToastStore } from '@/stores/toast'
+import { useUserStore } from '@/stores/user'
+
+const route = useRoute()
+const toast = useToastStore()
+const userStore = useUserStore()
+const appId = route.params.appId as string
+
+const isAdmin = computed(() => userStore.isAdmin)
+const pollingDots = computed(() => '.'.repeat(Math.min(pollingCount.value, 6)))
 
 const previewUrl = ref('')
 const taskId = ref('')
@@ -114,10 +161,21 @@ const promptPresets = ref<OcrPromptPreset[]>([])
 const selectedPresetId = ref('text')
 const error = ref('')
 const isSubmitting = ref(false)
+const isProcessing = ref(false)
+const pollingCount = ref(0)
+const elapsedTime = ref(0)
 const showToast = ref(false)
+const showConfigDialog = ref(false)
+const multimodalModels = ref<{ id: string; name: string }[]>([])
+const configData = ref({
+  vlm_model_id: '',
+  vlm_temperature: 0.2,
+  vlm_timeout_sec: 120,
+})
 
 let pollTimer: number | null = null
 let toastTimer: number | null = null
+let elapsedTimer: number | null = null
 
 function showCopySuccess() {
   showToast.value = true
@@ -209,8 +267,16 @@ function handleFileChange(event: Event) {
 async function submit() {
   if (!previewUrl.value) return
   isSubmitting.value = true
+  isProcessing.value = true
+  pollingCount.value = 0
+  elapsedTime.value = 0
   error.value = ''
   result.value = ''
+
+  // 启动计时器
+  elapsedTimer = window.setInterval(() => {
+    elapsedTime.value++
+  }, 1000)
 
   // Get the prompt from selected preset
   const selectedPreset = promptPresets.value.find(p => p.id === selectedPresetId.value)
@@ -224,8 +290,17 @@ async function submit() {
   } catch (err: any) {
     error.value = err?.message || '提交失败'
     status.value = 'error'
+    stopPolling()
+    stopElapsedTimer()
   } finally {
     isSubmitting.value = false
+  }
+}
+
+function stopElapsedTimer() {
+  if (elapsedTimer) {
+    window.clearInterval(elapsedTimer)
+    elapsedTimer = null
   }
 }
 
@@ -233,6 +308,7 @@ function startPolling() {
   stopPolling()
   pollTimer = window.setInterval(async () => {
     if (!taskId.value) return
+    pollingCount.value++
     try {
       const res = await getOcrStatus(taskId.value)
       status.value = res.status as typeof status.value
@@ -240,11 +316,15 @@ function startPolling() {
       error.value = res.error || ''
       if (status.value === 'done' || status.value === 'error') {
         stopPolling()
+        stopElapsedTimer()
+        isProcessing.value = false
       }
     } catch (err: any) {
       error.value = err?.message || '状态查询失败'
       status.value = 'error'
       stopPolling()
+      stopElapsedTimer()
+      isProcessing.value = false
     }
   }, 2000)
 }
@@ -304,7 +384,41 @@ async function copyAsExcel() {
   showCopySuccess()
 }
 
-onBeforeUnmount(() => stopPolling())
+onBeforeUnmount(() => {
+  stopPolling()
+  stopElapsedTimer()
+})
+
+async function openConfigDialog() {
+  try {
+    const config = await getAppConfig(appId)
+    configData.value = {
+      vlm_model_id: config.vlm_model_id || '',
+      vlm_temperature: config.vlm_temperature ?? 0.2,
+      vlm_timeout_sec: Math.floor((config.vlm_timeout_ms ?? 120000) / 1000),
+    }
+    // 加载可用的 multimodal 模型列表
+    const models = await modelApi.getModels()
+    multimodalModels.value = models.filter(m => m.model_type === 'multimodal').map(m => ({ id: m.id, name: m.name }))
+  } catch (err) {
+    console.error('Failed to load config:', err)
+  }
+  showConfigDialog.value = true
+}
+
+async function saveConfig() {
+  try {
+    await updateAppConfig(appId, {
+      vlm_model_id: configData.value.vlm_model_id || null,
+      vlm_temperature: configData.value.vlm_temperature,
+      vlm_timeout_ms: configData.value.vlm_timeout_sec * 1000,
+    })
+    toast.success('配置已保存')
+    showConfigDialog.value = false
+  } catch (err: any) {
+    toast.error('保存失败: ' + err.message)
+  }
+}
 
 onMounted(async () => {
   try {
@@ -320,7 +434,8 @@ onMounted(async () => {
 <style scoped>
 .ocr-tool-page {
   padding: 24px;
-  max-width: 1200px;
+  width: 80%;
+  max-width: 1400px;
   margin: 0 auto;
   font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
   color: #1b1f2a;
@@ -331,54 +446,89 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding: 28px;
-  border-radius: 20px;
-  background: radial-gradient(120% 120% at 0% 0%, #fff7e6 0%, #f7f1ff 35%, #eef6ff 100%);
-  position: relative;
-  overflow: hidden;
+  padding: 16px 24px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f7f1ff 0%, #eef6ff 100%);
 }
 
-.hero-text h1 {
-  margin: 6px 0 12px;
-  font-size: 32px;
+.hero-left {
+  flex: 0 0 auto;
+}
+
+.hero-left h1 {
+  margin: 4px 0 0;
+  font-size: 24px;
   letter-spacing: -0.5px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-icon {
+  font-size: 24px;
+  color: #409eff;
 }
 
 .eyebrow {
-  font-size: 12px;
-  letter-spacing: 2px;
+  font-size: 11px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   color: #7d6a5a;
-}
-
-.subhead {
   margin: 0;
-  color: #4b566b;
 }
 
-.hero-orb {
-  width: 140px;
-  height: 140px;
+.hero-right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #666;
+  font-size: 13px;
+}
+
+.hero-right .hint-text {
+  color: #999;
+  font-size: 12px;
+}
+
+.config-btn {
+  background: rgba(255, 255, 255, 0.9);
+  border: none;
   border-radius: 50%;
-  background: conic-gradient(from 180deg, #ffcf6f, #f3a6ff, #6fd3ff, #ffcf6f);
-  filter: blur(0.2px);
-  opacity: 0.8;
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.config-btn:hover {
+  background: #fff;
+  transform: scale(1.1);
+}
+
+.config-btn .el-icon {
+  font-size: 18px;
+  color: #4b566b;
 }
 
 .workspace {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   gap: 20px;
   margin-top: 20px;
 }
 
 .upload-panel {
-  flex-shrink: 0;
+  flex: 0 0 40%;
+  min-width: 300px;
 }
 
 .result-panel {
   flex: 1;
-  min-height: 300px;
+  min-width: 400px;
 }
 
 .panel {
@@ -400,6 +550,12 @@ onMounted(async () => {
   font-size: 13px;
   color: #909399;
   font-weight: normal;
+}
+
+.elapsed-time {
+  font-size: 13px;
+  color: #67c23a;
+  font-weight: 500;
 }
 
 .task-id {
@@ -515,16 +671,26 @@ onMounted(async () => {
 /* Markdown 渲染结果样式 */
 .result-markdown {
   width: 100%;
-  flex: 1;
-  min-height: 450px;
+  max-height: 500px;
+  overflow-y: auto;
   margin-top: 10px;
   padding: 12px;
   background: #fafafa;
   border-radius: 8px;
-  overflow-y: auto;
   font-family: "IBM Plex Mono", "SFMono-Regular", monospace;
   font-size: 14px;
   line-height: 1.6;
+}
+
+.result-placeholder {
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 14px;
 }
 
 .result-markdown :deep(h1),
@@ -687,17 +853,30 @@ onMounted(async () => {
   to { opacity: 1; transform: translateY(0); }
 }
 
+@media (max-width: 900px) {
+  .ocr-tool-page {
+    width: 95%;
+  }
+  .workspace {
+    flex-direction: column;
+  }
+  .upload-panel {
+    flex: none;
+    min-width: auto;
+  }
+  .result-panel {
+    min-width: auto;
+  }
+}
+
 @media (max-width: 720px) {
   .hero {
     flex-direction: column;
     align-items: flex-start;
+    gap: 12px;
   }
-  .hero-orb {
-    align-self: center;
-  }
-  .workspace {
-    grid-template-rows: 1fr 1fr;
-    min-height: auto;
+  .hero-right {
+    flex-direction: column;
   }
   .dropzone {
     min-height: 220px;
@@ -705,5 +884,138 @@ onMounted(async () => {
   .result-box {
     min-height: 220px;
   }
+}
+
+/* 配置对话框 */
+
+.config-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.config-dialog {
+  background: #fff;
+  border-radius: 16px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.config-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #eee;
+}
+
+.config-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.btn-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  color: #999;
+}
+
+.config-body {
+  padding: 24px;
+}
+
+.config-field {
+  margin-bottom: 20px;
+}
+
+.config-field label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.config-field .el-select {
+  width: 100%;
+}
+
+.config-field .hint {
+  display: block;
+  font-size: 12px;
+  color: #999;
+  margin-top: 6px;
+}
+
+.config-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid #eee;
+}
+
+/* 识别中提示 */
+.processing-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.processing-modal {
+  background: #fff;
+  border-radius: 16px;
+  padding: 32px 48px;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.processing-spinner {
+  margin-bottom: 16px;
+}
+
+.spin-icon {
+  font-size: 48px;
+  color: #409eff;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.processing-text {
+  font-size: 18px;
+  color: #333;
+  margin: 0 0 8px 0;
+}
+
+.processing-time {
+  font-weight: 600;
+  color: #409eff;
+}
+
+.processing-dots {
+  font-size: 24px;
+  color: #409eff;
+  margin: 0;
+  letter-spacing: 4px;
 }
 </style>
