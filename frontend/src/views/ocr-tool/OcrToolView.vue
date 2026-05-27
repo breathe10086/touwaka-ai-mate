@@ -65,7 +65,7 @@
       </div>
       <div class="hero-right">
         <span>支持 JPG/PNG/WEBP 图片，自动提取文字内容</span>
-        <span class="hint-text">识别结果仅供参考，请校对后使用</span>
+        <span class="hint-text">不记录识别历史，请及时保存 · 识别结果仅供参考</span>
       </div>
       <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
         <el-icon><Setting /></el-icon>
