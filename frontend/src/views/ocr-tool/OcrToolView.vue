@@ -64,8 +64,8 @@
         <h1>文本提取器</h1>
       </div>
       <div class="hero-right">
-        <span>仅支持图片，不保存原图。上传后自动识别，结果可复制。</span>
-        <span>识别结果仅供参考，请人工校对后再使用。</span>
+        <span>支持 JPG/PNG/WEBP 图片，自动提取文字内容</span>
+        <span class="hint-text">识别结果仅供参考，请校对后使用</span>
       </div>
       <button v-if="isAdmin" class="config-btn" @click="openConfigDialog" title="配置">
         <el-icon><Setting /></el-icon>
@@ -476,6 +476,11 @@ onMounted(async () => {
   gap: 4px;
   color: #666;
   font-size: 13px;
+}
+
+.hero-right .hint-text {
+  color: #999;
+  font-size: 12px;
 }
 
 .config-btn {
