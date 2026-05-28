@@ -58,6 +58,16 @@
       </div>
     </Teleport>
 
+<!-- 全屏预览图片 -->
+    <Teleport to="body">
+      <div v-if="showFullscreen && previewUrl" class="fullscreen-overlay" @click="showFullscreen = false">
+        <div class="fullscreen-content" @click.stop>
+          <img :src="previewUrl" alt="preview" />
+          <el-icon class="close-btn" @click="showFullscreen = false"><Close /></el-icon>
+        </div>
+      </div>
+    </Teleport>
+
     <section class="hero">
       <div class="hero-left">
         <p class="eyebrow">OCR TOOL</p>
@@ -81,17 +91,20 @@
           </div>
         </template>
 
-        <label class="dropzone" :class="{ filled: !!previewUrl }">
-          <input type="file" accept="image/*" @change="handleFileChange" />
-          <div v-if="!previewUrl" class="placeholder">
-            <el-icon class="upload-icon"><Upload /></el-icon>
-            <div>
-              <strong>选择图片</strong>
-              <p>或拖拽到此处</p>
+        <div class="dropzone-wrapper">
+          <label class="dropzone" :class="{ filled: !!previewUrl }">
+            <input type="file" accept="image/*" @change="handleFileChange" />
+            <div v-if="!previewUrl" class="placeholder">
+              <el-icon class="upload-icon"><Upload /></el-icon>
+              <div>
+                <strong>选择图片</strong>
+                <p>或拖拽到此处</p>
+              </div>
             </div>
-          </div>
-          <img v-else :src="previewUrl" alt="preview" />
-        </label>
+            <img v-else :src="previewUrl" alt="preview" />
+          </label>
+          <el-icon v-if="previewUrl" class="zoom-icon" @click="showFullscreen = true"><ZoomIn /></el-icon>
+        </div>
 
         <div class="field">
           <label>输出格式</label>
@@ -137,7 +150,7 @@
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { Upload, WarningFilled, InfoFilled, Setting, Loading, Camera } from '@element-plus/icons-vue'
+import { Upload, WarningFilled, InfoFilled, Setting, Loading, Camera, ZoomIn, Close } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
 import { modelApi } from '@/api/services'
@@ -166,6 +179,7 @@ const pollingCount = ref(0)
 const elapsedTime = ref(0)
 const showToast = ref(false)
 const showConfigDialog = ref(false)
+const showFullscreen = ref(false)
 const multimodalModels = ref<{ id: string; name: string }[]>([])
 const configData = ref({
   vlm_model_id: '',
@@ -262,6 +276,36 @@ function handleFileChange(event: Event) {
     taskId.value = ''
   }
   reader.readAsDataURL(file)
+}
+
+// 处理粘贴事件，支持 Ctrl+V 粘贴图片
+async function handlePaste(e: ClipboardEvent) {
+  const items = e.clipboardData?.items
+  if (!items) return
+
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault()
+      const file = item.getAsFile()
+      if (!file) return
+
+      if (file.size > MAX_IMAGE_SIZE) {
+        ElMessage.error('图片大小不能超过 5MB，请压缩后重试')
+        return
+      }
+
+      const reader = new FileReader()
+      reader.onload = () => {
+        previewUrl.value = String(reader.result || '')
+        result.value = ''
+        error.value = ''
+        status.value = 'idle'
+        taskId.value = ''
+      }
+      reader.readAsDataURL(file)
+      return
+    }
+  }
 }
 
 async function submit() {
@@ -387,6 +431,7 @@ async function copyAsExcel() {
 onBeforeUnmount(() => {
   stopPolling()
   stopElapsedTimer()
+  document.removeEventListener('paste', handlePaste)
 })
 
 async function openConfigDialog() {
@@ -428,6 +473,9 @@ onMounted(async () => {
   } catch (err) {
     console.error('Failed to load prompt presets:', err)
   }
+
+  // 监听粘贴事件，支持 Ctrl+V 粘贴图片
+  document.addEventListener('paste', handlePaste)
 })
 </script>
 
@@ -601,6 +649,29 @@ onMounted(async () => {
   height: 100%;
   object-fit: contain;
   background: #fff;
+}
+
+.dropzone-wrapper {
+  position: relative;
+}
+
+.dropzone-wrapper .zoom-icon {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  font-size: 24px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 8px;
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 1;
+  transition: background 0.2s;
+  z-index: 10;
+}
+
+.dropzone-wrapper .zoom-icon:hover {
+  background: rgba(0, 0, 0, 0.7);
 }
 
 .upload-icon {
@@ -1017,5 +1088,48 @@ onMounted(async () => {
   color: #409eff;
   margin: 0;
   letter-spacing: 4px;
+}
+
+/* 全屏预览 */
+.fullscreen-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.fullscreen-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+.fullscreen-content img {
+  max-width: 100%;
+  max-height: 90vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.fullscreen-content .close-btn {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  font-size: 32px;
+  color: #fff;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.2);
+  padding: 8px;
+  border-radius: 50%;
+}
+
+.fullscreen-content .close-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 </style>
