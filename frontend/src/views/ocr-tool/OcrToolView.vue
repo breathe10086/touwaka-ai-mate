@@ -144,6 +144,7 @@
             <span>识别结果</span>
             <span v-if="elapsedTime > 0" class="elapsed-time">用时 {{ elapsedTime }} 秒</span>
             <el-button v-if="result" link type="primary" size="small" @click="copyResult">复制文本</el-button>
+            <el-button v-if="showCopyAsExcel && result" link type="primary" size="small" @click="copyAsExcel">复制表格</el-button>
           </div>
         </template>
 
