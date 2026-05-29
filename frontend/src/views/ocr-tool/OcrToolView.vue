@@ -99,11 +99,21 @@
               <div>
                 <strong>选择图片</strong>
                 <p>或拖拽到此处</p>
+                <p class="paste-hint">或点击按钮从剪贴板粘贴</p>
               </div>
             </div>
             <img v-else :src="previewUrl" alt="preview" />
           </label>
-          <el-icon v-if="previewUrl" class="zoom-icon" @click="showFullscreen = true"><ZoomIn /></el-icon>
+          <div class="dropzone-actions">
+            <el-button type="info" plain size="small" @click="handlePasteFromClipboard">
+              <el-icon><Document /></el-icon>
+              剪贴板粘贴
+            </el-button>
+            <el-button v-if="previewUrl" size="small" @click="showFullscreen = true">
+              <el-icon><ZoomIn /></el-icon>
+              放大
+            </el-button>
+          </div>
         </div>
 
         <div class="field">
@@ -147,10 +157,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { marked } from 'marked'
 import { ElMessage } from 'element-plus'
-import { Upload, WarningFilled, InfoFilled, Setting, Loading, Camera, ZoomIn, Close } from '@element-plus/icons-vue'
+import { Upload, WarningFilled, InfoFilled, Setting, Loading, Camera, ZoomIn, Close, Document } from '@element-plus/icons-vue'
 import { analyzeOcrImage, getOcrStatus, getOcrPromptPresets, type OcrPromptPreset } from '@/api/ocr-tool'
 import { getAppConfig, updateAppConfig } from '@/api/mini-apps'
 import { modelApi } from '@/api/services'
@@ -180,6 +190,7 @@ const elapsedTime = ref(0)
 const showToast = ref(false)
 const showConfigDialog = ref(false)
 const showFullscreen = ref(false)
+let defaultPresetId = 'text'
 const multimodalModels = ref<{ id: string; name: string }[]>([])
 const configData = ref({
   vlm_model_id: '',
@@ -251,6 +262,21 @@ const renderedResult = computed(() => {
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024 // 5MB
 
+function loadImageFile(file: File) {
+  const reader = new FileReader()
+  reader.onerror = () => {
+    ElMessage.error('图片读取失败，请重试')
+  }
+  reader.onload = () => {
+    previewUrl.value = String(reader.result || '')
+    result.value = ''
+    error.value = ''
+    status.value = 'idle'
+    taskId.value = ''
+  }
+  reader.readAsDataURL(file)
+}
+
 function handleFileChange(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -261,21 +287,59 @@ function handleFileChange(event: Event) {
     return
   }
 
-  // Check file size
   if (file.size > MAX_IMAGE_SIZE) {
     ElMessage.error('图片大小不能超过 5MB，请压缩后重试')
     return
   }
 
-  const reader = new FileReader()
-  reader.onload = () => {
-    previewUrl.value = String(reader.result || '')
-    result.value = ''
-    error.value = ''
-    status.value = 'idle'
-    taskId.value = ''
+  loadImageFile(file)
+}
+
+async function handlePasteFromClipboard() {
+  if (navigator.clipboard && navigator.clipboard.read) {
+    try {
+      const clipboardItems = await navigator.clipboard.read()
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(t => t.startsWith('image/'))
+        if (imageType) {
+          const blob = await item.getType(imageType)
+          if (blob.size > MAX_IMAGE_SIZE) {
+            ElMessage.error('图片大小不能超过 5MB，请压缩后重试')
+            return
+          }
+          const file = new File([blob], 'clipboard-image.png', { type: imageType })
+          loadImageFile(file)
+          return
+        }
+      }
+      ElMessage.warning('剪贴板中没有图片')
+      return
+    } catch {
+      // Clipboard API 失败，继续尝试 paste 事件
+    }
   }
-  reader.readAsDataURL(file)
+
+  ElMessage.info('请在页面任意位置按 Ctrl+V 粘贴图片')
+  const pasteHandler = (e: ClipboardEvent) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (!file) return
+        if (file.size > MAX_IMAGE_SIZE) {
+          ElMessage.error('图片大小不能超过 5MB，请压缩后重试')
+          return
+        }
+        loadImageFile(file)
+        document.removeEventListener('paste', pasteHandler)
+        return
+      }
+    }
+  }
+  document.addEventListener('paste', pasteHandler)
+  setTimeout(() => document.removeEventListener('paste', pasteHandler), 10000)
 }
 
 // 处理粘贴事件，支持 Ctrl+V 粘贴图片
@@ -386,45 +450,49 @@ function reset() {
   status.value = 'idle'
   result.value = ''
   error.value = ''
-  selectedPresetId.value = 'markdown'
+  selectedPresetId.value = defaultPresetId
   stopPolling()
 }
 
-async function copyResult() {
-  try {
-    await navigator.clipboard.writeText(result.value)
-  } catch {
-    // 复制可能成功但抛出异常，忽略错误
+function copyToClipboard(text: string): boolean {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => true).catch(() => false)
+    return true
   }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const success = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  return success
+}
+
+async function copyResult() {
+  copyToClipboard(result.value)
   showCopySuccess()
 }
 
 async function copyAsExcel() {
-  try {
-    // 去掉 VLM 返回的代码块标记 ```markdown 和 ```
-    let tabSeparated = result.value
-    tabSeparated = tabSeparated.replace(/^```markdown\s*/g, '').replace(/```$/g, '').trim()
-    
-    // 把 Markdown 表格（|---| 格式）转换为 Tab 分割的格式
-    const lines = tabSeparated.split('\n')
-    const processedLines = lines.map(line => {
-      // 只处理包含 | 的行（表格行）
-      if (line.includes('|')) {
-        // 去掉首尾的 |，然后把中间的 | 替换为 Tab
-        let content = line.trim()
-        if (content.startsWith('|')) content = content.slice(1)
-        if (content.endsWith('|')) content = content.slice(0, -1)
-        // 把 | 替换为 Tab
-        return content.split('|').map(s => s.trim()).join('\t')
-      }
-      return line
-    })
-    
-    tabSeparated = processedLines.join('\n')
-    await navigator.clipboard.writeText(tabSeparated)
-  } catch {
-    // 复制可能成功但抛出异常，忽略错误
-  }
+  let tabSeparated = result.value
+  tabSeparated = tabSeparated.replace(/^```markdown\s*/g, '').replace(/```$/g, '').trim()
+  
+  const lines = tabSeparated.split('\n')
+  const processedLines = lines.map(line => {
+    if (line.includes('|')) {
+      let content = line.trim()
+      if (content.startsWith('|')) content = content.slice(1)
+      if (content.endsWith('|')) content = content.slice(0, -1)
+      return content.split('|').map(s => s.trim()).join('\t')
+    }
+    return line
+  })
+  
+  tabSeparated = processedLines.join('\n')
+  copyToClipboard(tabSeparated)
   showCopySuccess()
 }
 
@@ -469,13 +537,18 @@ onMounted(async () => {
   try {
     const res = await getOcrPromptPresets()
     promptPresets.value = res.presets || []
-    selectedPresetId.value = res.defaultId || 'markdown'
+    defaultPresetId = res.defaultId || promptPresets.value[0]?.id || 'text'
+    selectedPresetId.value = defaultPresetId
   } catch (err) {
     console.error('Failed to load prompt presets:', err)
   }
 
   // 监听粘贴事件，支持 Ctrl+V 粘贴图片
   document.addEventListener('paste', handlePaste)
+})
+
+watch(showFullscreen, (val) => {
+  document.body.style.overflow = val ? 'hidden' : ''
 })
 </script>
 
@@ -652,26 +725,15 @@ onMounted(async () => {
 }
 
 .dropzone-wrapper {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.dropzone-wrapper .zoom-icon {
-  position: absolute;
-  bottom: 12px;
-  right: 12px;
-  font-size: 24px;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.5);
-  padding: 8px;
-  border-radius: 50%;
-  cursor: pointer;
-  opacity: 1;
-  transition: background 0.2s;
-  z-index: 10;
-}
-
-.dropzone-wrapper .zoom-icon:hover {
-  background: rgba(0, 0, 0, 0.7);
+.dropzone-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .upload-icon {
@@ -695,6 +757,12 @@ onMounted(async () => {
   margin: 0;
   font-size: 13px;
   color: #909399;
+}
+
+.placeholder .paste-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #c0c4cc;
 }
 
 .field {
@@ -1091,45 +1159,27 @@ onMounted(async () => {
 }
 
 /* 全屏预览 */
-.fullscreen-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.9);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
+.fullscreen-preview-dialog :deep(.el-dialog__header) {
+  display: none;
 }
 
-.fullscreen-content {
-  position: relative;
-  max-width: 90vw;
-  max-height: 90vh;
+.fullscreen-preview-dialog :deep(.el-dialog__body) {
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.fullscreen-content img {
+  max-height: 80vh;
+  object-fit: contain;
+}
+</style>
 }
 
 .fullscreen-content img {
   max-width: 100%;
-  max-height: 90vh;
+  max-height: 80vh;
   object-fit: contain;
-  border-radius: 8px;
-}
-
-.fullscreen-content .close-btn {
-  position: absolute;
-  top: -40px;
-  right: 0;
-  font-size: 32px;
-  color: #fff;
-  cursor: pointer;
-  background: rgba(255, 255, 255, 0.2);
-  padding: 8px;
-  border-radius: 50%;
-}
-
-.fullscreen-content .close-btn:hover {
-  background: rgba(255, 255, 255, 0.3);
 }
 </style>
