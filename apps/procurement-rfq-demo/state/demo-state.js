@@ -41,8 +41,14 @@ class DemoState {
       // Award 总结
       award_summary: null,
 
+      // 比较底表（comparison base，Award 前中间层）
+      comparison_base: null,
+
       // 当前选中 component
       active_component_id: null,
+
+      // Buyer 视角（demo 用 ID 切换模拟登录）
+      buyer_perspective: null,
 
       // 元信息
       updated_at: new Date().toISOString(),
@@ -215,6 +221,30 @@ class DemoState {
   set_award_summary(summary) {
     this._state.award_summary = summary;
     this._touch();
+  }
+
+  set_comparison_base(base) {
+    this._state.comparison_base = base;
+    this._touch();
+  }
+
+  set_buyer_perspective(buyerId) {
+    this._state.buyer_perspective = buyerId;
+    this._touch();
+  }
+
+  get_buyer_perspective() {
+    return this._state.buyer_perspective;
+  }
+
+  /**
+   * 按 buyer 视角过滤 components
+   * @param {string|null} buyerId
+   * @returns {Array}
+   */
+  get_components_by_buyer(buyerId) {
+    if (!buyerId) return this._state.components;
+    return this._state.components.filter(c => c.assigned_buyer === buyerId);
   }
 
   /**

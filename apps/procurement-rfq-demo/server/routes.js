@@ -15,6 +15,8 @@ import { generateRFQPreview, generateRFQEmailPreview } from '../domain/rfq/rfq-p
 import { createEmptyQuote, KEY_COMPARISON_FIELDS, EXTENDED_FIELDS } from '../domain/quotation/quote-types.js';
 import { normalizeQuote, normalizeQuotes } from '../domain/quotation/normalizer.js';
 import { generateAwardSummary, SCORING_WEIGHTS } from '../domain/award/comparison.js';
+import { generateComparisonBase } from '../domain/award/comparison-base.js';
+import { generateQuoteReview } from '../domain/quotation/quote-review.js';
 import demoState from '../state/demo-state.js';
 import { STATUS, STATUS_ORDER } from '../state/state-constants.js';
 
@@ -169,6 +171,26 @@ export default function createRoutes(context) {
    */
   router.get('/buyer/list', async (ctx) => {
     ctx.success(getAllBuyers());
+  });
+
+  /**
+   * PUT /buyer/perspective
+   * 切换 Buyer 视角（demo 模拟登录）
+   * Body: { buyer_id: string | null }
+   */
+  router.put('/buyer/perspective', async (ctx) => {
+    try {
+      const { buyer_id } = ctx.request.body;
+      demoState.set_buyer_perspective(buyer_id || null);
+      const filtered = demoState.get_components_by_buyer(buyer_id);
+      ctx.success({
+        buyer_id,
+        visible_components: filtered,
+        component_count: filtered.length,
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
   });
 
   // ==================== Component 路由 ====================
@@ -441,6 +463,66 @@ export default function createRoutes(context) {
     }
   });
 
+  /**
+   * GET /quote/review/:component_id
+   * 生成报价审核摘要
+   */
+  router.get('/quote/review/:component_id', async (ctx) => {
+    try {
+      const { component_id } = ctx.params;
+      const state = demoState.snapshot;
+      const quotes = Object.values(state.supplier_quotes[component_id] || {});
+      const normalizedQuotes = Object.values(state.normalized_quotes[component_id] || {});
+
+      if (quotes.length < 2) {
+        ctx.error('需要至少 2 家供应商报价才能审核', 400);
+        return;
+      }
+
+      const review = generateQuoteReview(component_id, quotes, normalizedQuotes);
+      ctx.success(review);
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  // ==================== 比较底表路由 ====================
+
+  /**
+   * POST /comparison-base/generate/:component_id
+   * 生成比较底表
+   */
+  router.post('/comparison-base/generate/:component_id', async (ctx) => {
+    try {
+      const { component_id } = ctx.params;
+      const state = demoState.snapshot;
+
+      const comp = state.components.find(c => c.component_no === component_id);
+      if (!comp) {
+        ctx.error('Component 不存在', 404);
+        return;
+      }
+
+      const normalizedQuotes = Object.values(state.normalized_quotes[component_id] || {});
+      if (normalizedQuotes.length < 2) {
+        ctx.error('需要至少 2 家供应商的标准化报价', 400);
+        return;
+      }
+
+      const supplierProfiles = {};
+      for (const nq of normalizedQuotes) {
+        supplierProfiles[nq.supplier_id] = getSupplierById(nq.supplier_id) || {};
+      }
+
+      const comparisonBase = generateComparisonBase(comp, normalizedQuotes, supplierProfiles);
+      demoState.set_comparison_base(comparisonBase);
+
+      ctx.success(comparisonBase);
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
   // ==================== Award 路由 ====================
 
   /**
@@ -599,6 +681,13 @@ export default function createRoutes(context) {
       demoState.set_award_summary(awardSummary);
       demoState.transition(STATUS.AWARD_REVIEWED);
 
+      // 同步生成比较底表
+      const comparisonBase = generateComparisonBase(activeComponent, normalizedQuotes, supplierProfiles);
+      demoState.set_comparison_base(comparisonBase);
+
+      // 同步生成报价审核
+      const quoteReview = generateQuoteReview(activeComponent.component_no, quotes, normalizedQuotes);
+
       ctx.success({
         project,
         components: assigned,
@@ -607,6 +696,8 @@ export default function createRoutes(context) {
         quotes,
         quote_count: quotes.length,
         award_summary: awardSummary,
+        comparison_base: comparisonBase,
+        quote_review: quoteReview,
       });
     } catch (error) {
       ctx.error(error.message, 500);
