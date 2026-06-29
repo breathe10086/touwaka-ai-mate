@@ -291,6 +291,7 @@
             <el-button type="success" style="margin-top: 12px" @click="handleGenerateAward" :disabled="quoteCount < 2">
               生成 Award Summary
             </el-button>
+            <span style="margin-left:8px;color:#999;font-size:12px">已加载 {{ quoteCount }} 家报价</span>
           </div>
 
           <div v-else>
@@ -422,6 +423,12 @@ const state = reactive({
   components: [],
   active_component_id: null,
   available_actions: [],
+  supplier_quotes: {},
+  normalized_quotes: {},
+  supplier_candidates: {},
+  rfq_previews: {},
+  constraint_forms: {},
+  active_component: null,
 })
 const constraintForm = reactive({
   process_type: '',
@@ -496,8 +503,15 @@ const constraintTableData = computed(() => {
 })
 
 const quoteCount = computed(() => {
-  // 简单判断是否已有报价数据
-  return awardSummary.value ? awardSummary.value.comparison_rows.length : 0
+  // 从 state 中读取已加载的报价数量（而非 awardSummary，后者要在生成后才存在）
+  if (!state.active_component_id || !state.supplier_quotes) {
+    console.log('[quoteCount] early return 0, active:', state.active_component_id, 'sq:', state.supplier_quotes)
+    return 0
+  }
+  const quotes = state.supplier_quotes[state.active_component_id]
+  const count = quotes ? Object.keys(quotes).length : 0
+  console.log('[quoteCount] =', count, 'for', state.active_component_id, 'all_keys:', Object.keys(state.supplier_quotes))
+  return count
 })
 
 const scoreDetailRows = computed(() => {
@@ -520,7 +534,19 @@ const scoreDetailRows = computed(() => {
 async function refreshState() {
   try {
     const data = await apiGet('/state')
-    Object.assign(state, data)
+    // 逐字段显式赋值，避免 Object.assign 在 reactive proxy 上的追踪边界问题
+    state.status = data.status
+    state.project = data.project
+    state.components = data.components || []
+    state.active_component_id = data.active_component_id
+    state.available_actions = data.available_actions || []
+    state.supplier_quotes = data.supplier_quotes || {}
+    state.normalized_quotes = data.normalized_quotes || {}
+    state.supplier_candidates = data.supplier_candidates || {}
+    state.rfq_previews = data.rfq_previews || {}
+    state.constraint_forms = data.constraint_forms || {}
+    state.active_component = data.active_component || null
+    console.log('[refreshState] supplier_quotes keys:', Object.keys(state.supplier_quotes), 'active_component_id:', state.active_component_id)
   } catch (e) {
     console.error('Failed to load state:', e)
   }
@@ -684,7 +710,10 @@ async function handleGenerateRFQPreview() {
 }
 
 async function handleLoadMockQuotes() {
-  if (!state.active_component_id) return
+  if (!state.active_component_id) {
+    ElMessage.warning('请先在左侧列表中选择一个部件')
+    return
+  }
   loading.value = true
   try {
     await apiPost(`/quote/load-mock/${state.active_component_id}`)
@@ -692,14 +721,22 @@ async function handleLoadMockQuotes() {
     ElMessage.success('Mock 报价已加载')
   } catch (e: any) {
     console.error('Load mock quotes failed:', e)
-    ElMessage.warning('当前部件无可用的 mock 报价，请尝试其他部件')
+    const msg = e?.response?.data?.message || e?.message || ''
+    ElMessage.warning(msg || '当前部件无可用的 mock 报价，请尝试其他部件')
   } finally {
     loading.value = false
   }
 }
 
 async function handleGenerateAward() {
-  if (!state.active_component_id) return
+  if (!state.active_component_id) {
+    ElMessage.warning('请先在左侧列表中选择一个部件')
+    return
+  }
+  if (quoteCount.value < 2) {
+    ElMessage.warning('请先加载至少 2 家供应商的报价数据')
+    return
+  }
   loading.value = true
   try {
     const data = await apiPost(`/award/generate/${state.active_component_id}`)
@@ -707,8 +744,9 @@ async function handleGenerateAward() {
     await refreshState()
     activeTab.value = 'award'
     ElMessage.success('Award Summary 已生成')
-  } catch (e) {
+  } catch (e: any) {
     console.error('Generate award failed:', e)
+    ElMessage.error('生成 Award Summary 失败: ' + (e?.response?.data?.message || e?.message || ''))
   } finally {
     loading.value = false
   }
