@@ -28,6 +28,7 @@ const AppComponentMap: Record<string, Component> = {
   'OcrToolView': defineAsyncComponent(() => import('@/views/ocr-tool/OcrToolView.vue')),
   'ResumeScreeningView': defineAsyncComponent(() => import('@/views/resume-fast-screening/ResumeScreeningView.vue')),
   'CurrentFeatureAnalyzerView': defineAsyncComponent(() => import('@apps/current-feature-analyzer/frontend/views/CurrentFeatureAnalyzerView.vue')),
+  'ProcurementRfqDemoView': defineAsyncComponent(() => import('@apps/procurement-rfq-demo/frontend/views/ProcurementRfqDemoView.vue')),
 }
 
 const route = useRoute()

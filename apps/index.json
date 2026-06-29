@@ -106,6 +106,19 @@
       "tags": ["电流", "CSV", "阶段识别", "信号分析", "LLM", "报告"],
       "path": "apps/current-feature-analyzer",
       "manifest_url": "apps/current-feature-analyzer/manifest.json"
+    },
+    {
+      "id": "procurement-rfq-demo",
+      "name": "采购询价 Demo",
+      "version": "0.1.0",
+      "icon": "📦",
+      "type": "utility",
+      "description": "采购RFQ独立演示原型：EBOM导入 → Buyer分派 → RFQ预览 → 报价对比 → Award评审",
+      "author": "Touwaka Team",
+      "license": "MIT",
+      "tags": ["采购", "RFQ", "询价", "报价", "供应商"],
+      "path": "apps/procurement-rfq-demo",
+      "manifest_url": "apps/procurement-rfq-demo/manifest.json"
     }
   ],
   "categories": [
@@ -116,7 +129,7 @@
     { "id": "workflow", "name": "工作流", "icon": "🔄", "description": "流程审批、状态流转、智能匹配" }
   ],
   "metadata": {
-    "total_apps": 8,
+    "total_apps": 9,
     "min_platform_version": "2.0.0",
     "last_updated_by": "Touwaka Team"
   }

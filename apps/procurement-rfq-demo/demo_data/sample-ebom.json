@@ -1,0 +1,83 @@
+{
+  "project": {
+    "project_code": "PRJ-2026-001",
+    "project_name": "新一代智能座舱控制器",
+    "part_no": "ICC-3000-ASSY",
+    "part_name": "智能座舱控制器总成",
+    "expected_supply_qty_monthly": 5000,
+    "expected_supply_qty_yearly": 60000,
+    "background_note": "本项目为新一代智能座舱控制器的国产化采购项目。供应商需具备 TS16949 认证，所有部件需满足车规级要求。优先考虑有量产经验的供应商。"
+  },
+  "rows": [
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-PCB-01",
+      "Component_Name": "主控 PCB 板",
+      "Quantity": 1,
+      "category": "electronics",
+      "Unit": "pcs",
+      "material_spec": "FR-4, 8层板, 2oz铜厚"
+    },
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-CONN-02",
+      "Component_Name": "高速连接器组件",
+      "Quantity": 3,
+      "category": "electronics",
+      "Unit": "pcs",
+      "material_spec": "车规级, IP67"
+    },
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-HSG-03",
+      "Component_Name": "铝合金外壳",
+      "Quantity": 1,
+      "category": "mechanical",
+      "Unit": "pcs",
+      "material_spec": "ADC12 压铸铝合金"
+    },
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-BRKT-04",
+      "Component_Name": "安装支架",
+      "Quantity": 2,
+      "category": "mechanical",
+      "Unit": "pcs",
+      "material_spec": "SPCC 冷轧钢板, 表面镀锌"
+    },
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-SCRW-05",
+      "Component_Name": "紧固螺丝套装",
+      "Quantity": 8,
+      "category": "fasteners",
+      "Unit": "pcs",
+      "material_spec": "不锈钢 SUS304"
+    },
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-GSKT-06",
+      "Component_Name": "密封垫片",
+      "Quantity": 1,
+      "category": "raw_material",
+      "Unit": "pcs",
+      "material_spec": "硅橡胶, 耐温 -40~125°C"
+    },
+    {
+      "Part_No": "ICC-3000-ASSY",
+      "Part_Name": "智能座舱控制器总成",
+      "Component_No": "ICC-3000-PACK-07",
+      "Component_Name": "单件包装盒",
+      "Quantity": 1,
+      "category": "packaging",
+      "Unit": "pcs",
+      "material_spec": "瓦楞纸 + EPE 内衬"
+    }
+  ]
+}

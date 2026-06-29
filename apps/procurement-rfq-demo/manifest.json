@@ -1,0 +1,53 @@
+{
+  "id": "procurement-rfq-demo",
+  "name": "采购询价 Demo",
+  "version": "0.1.0",
+  "description": "采购RFQ独立演示原型：EBOM导入 → 部件拆分 → Buyer分派 → 约束表单 → RFQ预览 → 供应商报价对比 → Award评审",
+  "icon": "📦",
+  "type": "document",  "component": "ProcurementRfqDemoView",  "author": "Touwaka Team",
+  "license": "MIT",
+  "runtime": {
+    "server": {
+      "routes": "server/routes.js"
+    }
+  },
+  "keywords": [
+    "采购",
+    "RFQ",
+    "询价",
+    "报价对比",
+    "供应商管理",
+    "EBOM",
+    "Award"
+  ],
+  "compatibility": {
+    "min_platform_version": "2.0.0",
+    "requires": {
+      "mcp": [],
+      "skills": []
+    }
+  },
+  "demo_scope": {
+    "p0_included": [
+      "EBOM 解析与 component 拆分",
+      "Buyer 分派",
+      "约束表单",
+      "供应商报价结构化",
+      "Award comparison 横向对比视图"
+    ],
+    "p1_included": [
+      "推荐规则与推荐理由",
+      "RFQ 预览数据组织",
+      "cost breakdown 关键字段映射",
+      "comparison 评分说明"
+    ],
+    "excluded": [
+      "邮件自动收发",
+      "AI 邮件理解与回流",
+      "正式数据库持久化",
+      "工程变更全链路",
+      "完整权限体系",
+      "真实 Excel 导出"
+    ]
+  }
+}
