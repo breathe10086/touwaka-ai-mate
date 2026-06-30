@@ -7,7 +7,7 @@
  * - 派生判断统一由 selector 函数推导，不维护冗余布尔变量
  * - 单一主工作台上下文：只允许一个当前 ebom / 一个当前 pn
  */
-import { STATUS, STATUS_TRANSITIONS, STATUS_ORDER, STATUS_LIGHT } from './state-constants.js';
+import { STATUS, STATUS_TRANSITIONS, STATUS_ORDER, STATUS_LIGHT, PN_REQUIREMENT_STATUS, PN_SUPPLIER_SELECTION_STATUS, PN_RFQ_STATUS, PN_QUOTE_COLLECTION_STATUS } from './state-constants.js';
 
 class DemoState {
   constructor() {
@@ -59,6 +59,26 @@ class DemoState {
 
       // Sourcing File 预览数据
       sourcing_file_preview: null,
+
+      // === PN 级局部状态（audit-round04） ===
+
+      // 约束编辑状态 (per component)
+      requirement_status: {},
+
+      // 供应商选择状态 (per component)
+      supplier_selection_status: {},
+
+      // RFQ 包状态 (per component)
+      rfq_status: {},
+
+      // 报价回传状态 (per component)
+      quote_collection_status: {},
+
+      // 已选中的供应商ID列表 (per component)
+      selected_supplier_ids: {},
+
+      // 已确认的供应商ID列表 (per component)
+      confirmed_supplier_ids: {},
 
       // 元信息
       updated_at: new Date().toISOString(),
@@ -115,97 +135,345 @@ class DemoState {
     }
   }
 
-  // ==================== 派生判断 (Selectors) ====================
+  // ==================== 派生判断 (Selectors) - PN 级（audit-round04） ====================
 
   /**
-   * 是否可以进入 buyer 分派阶段
+   * 获取指定 PN 的约束编辑状态
    */
-  can_assign_buyers() {
-    return this._state.status === STATUS.EBOM_IMPORTED
-      && this._state.project !== null
-      && this._state.components.length > 0;
+  get_requirement_status(component_id) {
+    return this._state.requirement_status[component_id] || PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING;
   }
 
   /**
-   * 是否可以准备 RFQ
+   * 获取指定 PN 的供应商选择状态
    */
-  can_prepare_rfq() {
-    return this._state.status === STATUS.BUYER_ASSIGNED
-      && this._state.active_component_id !== null;
+  get_supplier_selection_status(component_id) {
+    return this._state.supplier_selection_status[component_id] || PN_SUPPLIER_SELECTION_STATUS.NOT_STARTED;
   }
 
   /**
-   * 是否可以发送 RFQ（mock）
+   * 获取指定 PN 的 RFQ 状态
    */
-  can_send_rfq() {
-    return this._state.status === STATUS.RFQ_PREPARED
-      && this._state.active_component_id !== null
-      && (this._state.rfq_previews[this._state.active_component_id] !== undefined);
+  get_rfq_status(component_id) {
+    return this._state.rfq_status[component_id] || PN_RFQ_STATUS.NOT_PREPARED;
   }
 
   /**
-   * 是否可以模拟回传
+   * 获取指定 PN 的报价回传状态
    */
-  can_mock_reply() {
-    return this._state.status === STATUS.RFQ_SENT
-      && this._state.active_component_id !== null;
+  get_quote_collection_status(component_id) {
+    return this._state.quote_collection_status[component_id] || PN_QUOTE_COLLECTION_STATUS.NONE_REPLIED;
   }
 
   /**
-   * 是否可以生成 benchmark
+   * 是否可以编辑约束（per PN + role）
+   * audit-round05: 适配4状态机 - 只有 admin 且处于编辑态（first_entry_editing / manual_editing）时可编辑
    */
-  can_generate_benchmark() {
-    if (this._state.status !== STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS) return false;
-    const cid = this._state.active_component_id;
-    if (!cid) return false;
-    const quotes = this._state.supplier_quotes[cid] || {};
-    return Object.keys(quotes).length >= 2;
+  can_edit_requirements(component_id, role) {
+    if (role !== 'admin') return false;
+    const status = this.get_requirement_status(component_id);
+    return status === PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING
+      || status === PN_REQUIREMENT_STATUS.MANUAL_EDITING;
   }
 
   /**
-   * 是否可以生成 sourcing file
+   * 是否可以保存约束（从编辑态保存到锁定态）
+   * audit-round05: 适配4状态机
+   */
+  can_save_requirements(component_id) {
+    const status = this.get_requirement_status(component_id);
+    return status === PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING
+      || status === PN_REQUIREMENT_STATUS.MANUAL_EDITING;
+  }
+
+  /**
+   * 是否可以点击"修改约束"按钮（从锁定态进入手动编辑态）
+   * audit-round05: admin 在 saved_locked 或 manual_saved_locked 状态均可点击
+   */
+  can_start_editing_requirements(component_id, role) {
+    if (role !== 'admin') return false;
+    const status = this.get_requirement_status(component_id);
+    return status === PN_REQUIREMENT_STATUS.SAVED_LOCKED
+      || status === PN_REQUIREMENT_STATUS.MANUAL_SAVED_LOCKED;
+  }
+
+  /**
+   * 是否可以确认供应商（per PN + role: admin or assigned buyer）
+   */
+  can_confirm_suppliers(component_id, role) {
+    if (role !== 'admin') {
+      const comp = this._state.components.find(c => c.component_no === component_id);
+      if (!comp || comp.buyer_id !== role) return false;
+    }
+    const status = this.get_supplier_selection_status(component_id);
+    return status === PN_SUPPLIER_SELECTION_STATUS.SELECTING;
+  }
+
+  /**
+   * 是否可以修改已确认的供应商（per PN + role: admin or assigned buyer）
+   */
+  can_modify_suppliers(component_id, role) {
+    if (role !== 'admin') {
+      const comp = this._state.components.find(c => c.component_no === component_id);
+      if (!comp || comp.buyer_id !== role) return false;
+    }
+    return this.get_supplier_selection_status(component_id) === PN_SUPPLIER_SELECTION_STATUS.CONFIRMED;
+  }
+
+  /**
+   * 是否可以添加供应商（per PN + role: admin or assigned buyer, 仅在 confirmed 时可用）
+   * audit-round05: 新增 - 在已确认状态下可以追加供应商
+   */
+  can_add_supplier(component_id, role) {
+    if (role !== 'admin') {
+      const comp = this._state.components.find(c => c.component_no === component_id);
+      if (!comp || comp.buyer_id !== role) return false;
+    }
+    const selStatus = this.get_supplier_selection_status(component_id);
+    return selStatus === PN_SUPPLIER_SELECTION_STATUS.CONFIRMED
+      || selStatus === PN_SUPPLIER_SELECTION_STATUS.SELECTING;
+  }
+
+  /**
+   * 是否可以准备 RFQ（per PN + role: admin or assigned buyer）
+   * audit-round05: 不再限制 admin only
+   */
+  can_prepare_rfq(component_id, role) {
+    if (role !== 'admin') {
+      const comp = this._state.components.find(c => c.component_no === component_id);
+      if (!comp || comp.buyer_id !== role) return false;
+    }
+    const selStatus = this.get_supplier_selection_status(component_id);
+    if (selStatus !== PN_SUPPLIER_SELECTION_STATUS.CONFIRMED) return false;
+    const confirmedIds = this._state.confirmed_supplier_ids[component_id] || [];
+    return confirmedIds.length >= 2;
+  }
+
+  /**
+   * 是否可以发送 RFQ（per PN + role: admin or assigned buyer）
+   * audit-round05: 不再限制 admin only，允许 PN 的 assigned buyer 发送
+   */
+  can_send_rfq(component_id, role) {
+    if (role !== 'admin') {
+      const comp = this._state.components.find(c => c.component_no === component_id);
+      if (!comp || comp.buyer_id !== role) return false;
+    }
+    const rfqStatus = this.get_rfq_status(component_id);
+    return rfqStatus === PN_RFQ_STATUS.PREPARED || rfqStatus === PN_RFQ_STATUS.SENT;
+  }
+
+  /**
+   * 是否可以查看已发送的 RFQ（per PN）
+   */
+  can_view_sent_rfq(component_id) {
+    return this.get_rfq_status(component_id) === PN_RFQ_STATUS.SENT;
+  }
+
+  /**
+   * 是否可以模拟回传（per PN + role: admin only）
+   */
+  can_mock_reply(component_id, role) {
+    if (role !== 'admin') return false;
+    const rfqStatus = this.get_rfq_status(component_id);
+    if (rfqStatus !== PN_RFQ_STATUS.SENT) return false;
+    const collStatus = this.get_quote_collection_status(component_id);
+    return collStatus !== PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED;
+  }
+
+  /**
+   * 是否可以生成 benchmark（per PN）
+   */
+  can_generate_benchmark(component_id) {
+    const collStatus = this.get_quote_collection_status(component_id);
+    return collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED;
+  }
+
+  /**
+   * 是否可以生成 sourcing file（全局：所有 PN 满足 4 条件聚合）
+   * audit-round05: 4条件 per PN
+   *   1) 约束已保存（saved_locked / manual_saved_locked）
+   *   2) 供应商已确认 >=2 家
+   *   3) RFQ 已发送
+   *   4) 报价全部回传（all_replied）
    */
   can_generate_sourcing_file() {
-    return this._state.status === STATUS.BENCHMARK_READY
-      || this._state.status === STATUS.SOURCING_FILE_READY;
+    const allPnIds = this._state.components.map(c => c.component_no);
+    if (allPnIds.length === 0) return false;
+    return allPnIds.every(cid => {
+      // 条件1: 约束已保存
+      const reqStatus = this.get_requirement_status(cid);
+      if (reqStatus !== PN_REQUIREMENT_STATUS.SAVED_LOCKED
+        && reqStatus !== PN_REQUIREMENT_STATUS.MANUAL_SAVED_LOCKED) {
+        return false;
+      }
+      // 条件2: 供应商已确认 >=2
+      const confirmedIds = this._state.confirmed_supplier_ids[cid] || [];
+      if (confirmedIds.length < 2) return false;
+      // 条件3: RFQ 已发送
+      const rfqStatus = this.get_rfq_status(cid);
+      if (rfqStatus !== PN_RFQ_STATUS.SENT) return false;
+      // 条件4: 全部回传
+      const collStatus = this.get_quote_collection_status(cid);
+      if (collStatus !== PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) return false;
+      return true;
+    });
   }
 
   /**
-   * 获取当前阶段可执行的操作描述
+   * 获取 sourcing file 条件详情（per PN 诊断用）
+   * audit-round05: 返回每PN的4条件满足情况，前端用于展示 deficiency
+   */
+  get_sourcing_file_conditions() {
+    const allPnIds = this._state.components.map(c => c.component_no);
+    return allPnIds.map(cid => {
+      const reqStatus = this.get_requirement_status(cid);
+      const confirmedIds = this._state.confirmed_supplier_ids[cid] || [];
+      const rfqStatus = this.get_rfq_status(cid);
+      const collStatus = this.get_quote_collection_status(cid);
+      return {
+        component_id: cid,
+        constraint_saved: reqStatus === PN_REQUIREMENT_STATUS.SAVED_LOCKED
+          || reqStatus === PN_REQUIREMENT_STATUS.MANUAL_SAVED_LOCKED,
+        suppliers_confirmed: confirmedIds.length >= 2,
+        rfq_sent: rfqStatus === PN_RFQ_STATUS.SENT,
+        all_replied: collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED,
+        all_met: (
+          (reqStatus === PN_REQUIREMENT_STATUS.SAVED_LOCKED
+            || reqStatus === PN_REQUIREMENT_STATUS.MANUAL_SAVED_LOCKED)
+          && confirmedIds.length >= 2
+          && rfqStatus === PN_RFQ_STATUS.SENT
+          && collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED
+        ),
+      };
+    });
+  }
+
+  /**
+   * 获取完成进度对象（用于前端展示）
+   */
+  get_completion_progress() {
+    const allPnIds = this._state.components.map(c => c.component_no);
+    const total = allPnIds.length;
+    if (total === 0) return { pct: 0, completed_pns: 0, total_pns: 0 };
+    const completed = allPnIds.filter(cid =>
+      this.get_quote_collection_status(cid) === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED
+    ).length;
+    return { pct: Math.round((completed / total) * 100), completed_pns: completed, total_pns: total };
+  }
+
+  /**
+   * 判断是否可以修改 buyer 分派（全局，必须在 buyer_assigned 之前阶段）
+   */
+  can_assign_buyers() {
+    return this._state.components.length > 0
+      && this._state.project !== null;
+  }
+
+  // ==================== PN 级状态操作 ====================
+
+  set_requirement_status(component_id, status) {
+    this._state.requirement_status[component_id] = status;
+    this._touch();
+  }
+
+  set_supplier_selection_status(component_id, status) {
+    this._state.supplier_selection_status[component_id] = status;
+    this._touch();
+  }
+
+  set_rfq_status(component_id, status) {
+    this._state.rfq_status[component_id] = status;
+    this._touch();
+  }
+
+  set_quote_collection_status(component_id, status) {
+    this._state.quote_collection_status[component_id] = status;
+    this._touch();
+  }
+
+  set_selected_supplier_ids(component_id, ids) {
+    this._state.selected_supplier_ids[component_id] = [...ids];
+    this._touch();
+  }
+
+  get_selected_supplier_ids(component_id) {
+    return this._state.selected_supplier_ids[component_id] || [];
+  }
+
+  set_confirmed_supplier_ids(component_id, ids) {
+    this._state.confirmed_supplier_ids[component_id] = [...ids];
+    this._touch();
+  }
+
+  get_confirmed_supplier_ids(component_id) {
+    return this._state.confirmed_supplier_ids[component_id] || [];
+  }
+
+  /**
+   * 判断指定 PN 是否需要进入首次编辑模式
+   */
+  is_first_entry(component_id) {
+    const status = this.get_requirement_status(component_id);
+    return status === PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING;
+  }
+
+  /**
+   * 设置 PN 的约束编辑状态
+   * audit-round05 修正: isFirst=false 时设为 SAVED_LOCKED（已保存锁定），而非 MANUAL_EDITING
+   */
+  set_first_entry(component_id, isFirst) {
+    this._state.pn_is_first_entry = this._state.pn_is_first_entry || {};
+    this._state.pn_is_first_entry[component_id] = isFirst;
+    if (isFirst) {
+      this.set_requirement_status(component_id, PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING);
+    } else {
+      this.set_requirement_status(component_id, PN_REQUIREMENT_STATUS.SAVED_LOCKED);
+    }
+    this._touch();
+  }
+
+  /**
+   * 重置供应商选择状态（修改模式）
+   */
+  reset_supplier_selection(component_id) {
+    this._state.supplier_selection_status[component_id] = PN_SUPPLIER_SELECTION_STATUS.SELECTING;
+    this._state.confirmed_supplier_ids[component_id] = [];
+    this._touch();
+  }
+
+  /**
+   * 递增 PN 的 RFQ 发送次数
+   */
+  increment_rfq_sent_count(component_id) {
+    this._state.pn_rfq_sent_count = this._state.pn_rfq_sent_count || {};
+    this._state.pn_rfq_sent_count[component_id] = (this._state.pn_rfq_sent_count[component_id] || 0) + 1;
+    this._touch();
+  }
+
+  // ==================== 全局状态操作（保留） ====================
+
+  /**
+   * 获取当前阶段可执行的操作描述（全局概览用）
    */
   get_available_actions() {
     const actions = [];
-    switch (this._state.status) {
-      case STATUS.EBOM_IMPORTED:
-        if (this._state.components.length > 0) actions.push('assign_buyers');
-        actions.push('import_ebom');
-        break;
-      case STATUS.BUYER_ASSIGNED:
-        actions.push('fill_constraint_form');
-        actions.push('select_suppliers');
-        actions.push('prepare_rfq');
-        break;
-      case STATUS.RFQ_PREPARED:
-        actions.push('send_rfq');
-        actions.push('preview_rfq');
-        break;
-      case STATUS.RFQ_SENT:
-        actions.push('mock_supplier_reply');
-        break;
-      case STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS:
-        actions.push('generate_benchmark');
-        actions.push('mock_more_replies');
-        break;
-      case STATUS.BENCHMARK_READY:
-        actions.push('generate_sourcing_file');
-        break;
-      case STATUS.SOURCING_FILE_READY:
-        actions.push('generate_sourcing_file');
-        break;
-      case STATUS.SOURCING_FILE_GENERATED:
-        actions.push('reset_demo');
-        break;
-    }
+    const cid = this._state.active_component_id;
+    if (!cid) return actions;
+
+    const reqStatus = this.get_requirement_status(cid);
+    const selStatus = this.get_supplier_selection_status(cid);
+    const rfqStatus = this.get_rfq_status(cid);
+    const collStatus = this.get_quote_collection_status(cid);
+
+    if (reqStatus === PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING) actions.push('fill_constraint_form');
+    if (selStatus === PN_SUPPLIER_SELECTION_STATUS.NOT_STARTED) actions.push('recommend_suppliers');
+    if (selStatus === PN_SUPPLIER_SELECTION_STATUS.SELECTING) actions.push('confirm_suppliers');
+    if (selStatus === PN_SUPPLIER_SELECTION_STATUS.CONFIRMED && rfqStatus === PN_RFQ_STATUS.NOT_PREPARED) actions.push('prepare_rfq');
+    if (rfqStatus === PN_RFQ_STATUS.PREPARED) actions.push('send_rfq');
+    if (rfqStatus === PN_RFQ_STATUS.SENT && collStatus !== PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) actions.push('mock_reply');
+    if (collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) actions.push('generate_benchmark');
+    if (this.can_generate_sourcing_file()) actions.push('generate_sourcing_file');
+
     return actions;
   }
 

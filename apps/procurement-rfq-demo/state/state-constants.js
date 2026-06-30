@@ -87,6 +87,51 @@ const SUPPLIER_RECOMMENDATION_DIMENSIONS = [
   'process_type',
 ];
 
+// ==================== PN 级局部状态（audit-round04） ====================
+
+/**
+ * 约束编辑状态（per PN）
+ *
+ * 4 状态机（audit-round05 修正）：
+ *   first_entry_editing → (保存) → saved_locked
+ *   saved_locked → (点击"修改约束") → manual_editing
+ *   manual_editing → (保存) → manual_saved_locked
+ *   manual_saved_locked → (点击"修改约束") → manual_editing
+ */
+const PN_REQUIREMENT_STATUS = Object.freeze({
+  FIRST_ENTRY_EDITING: 'first_entry_editing',       // 首次进入，可编辑
+  SAVED_LOCKED: 'saved_locked',                      // 首次保存后锁定，只读
+  MANUAL_EDITING: 'manual_editing',                  // 点"修改约束"后进入编辑
+  MANUAL_SAVED_LOCKED: 'manual_saved_locked',        // 手动修改后保存，只读
+});
+
+/**
+ * 供应商选择状态（per PN）
+ */
+const PN_SUPPLIER_SELECTION_STATUS = Object.freeze({
+  NOT_STARTED: 'not_started',           // 未开始推荐
+  SELECTING: 'selecting',               // 正在选择（勾选框可见）
+  CONFIRMED: 'confirmed',               // 已确认（勾选框消失，显示"修改供应商"）
+});
+
+/**
+ * RFQ 包状态（per PN）
+ */
+const PN_RFQ_STATUS = Object.freeze({
+  NOT_PREPARED: 'not_prepared',         // 未生成 RFQ 预览
+  PREPARED: 'prepared',                  // 已生成预览，可发送
+  SENT: 'sent',                          // 已发送，可查看
+});
+
+/**
+ * 报价回传状态（per PN）
+ */
+const PN_QUOTE_COLLECTION_STATUS = Object.freeze({
+  NONE_REPLIED: 'none_replied',         // 尚无回传
+  PARTIAL_REPLIED: 'partial_replied',   // 部分回传
+  ALL_REPLIED: 'all_replied',           // 全部回传
+});
+
 export {
   STATUS,
   STATUS_TRANSITIONS,
@@ -94,4 +139,8 @@ export {
   STATUS_LIGHT,
   BUYER_ASSIGNMENT_RULES,
   SUPPLIER_RECOMMENDATION_DIMENSIONS,
+  PN_REQUIREMENT_STATUS,
+  PN_SUPPLIER_SELECTION_STATUS,
+  PN_RFQ_STATUS,
+  PN_QUOTE_COLLECTION_STATUS,
 };

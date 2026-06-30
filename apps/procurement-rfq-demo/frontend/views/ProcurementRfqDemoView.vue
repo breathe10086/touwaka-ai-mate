@@ -6,6 +6,11 @@
         <h1>📦 Buyer Workbench</h1>
         <span class="demo-badge">原型演示</span>
         <el-tag :type="statusLight.color">{{ statusLight.label }}</el-tag>
+        <!-- audit-round04: Progress Bar -->
+        <div v-if="state.progress" class="progress-bar-wrap">
+          <el-progress :percentage="progressPercent" :stroke-width="8" :show-text="false" style="width:160px"></el-progress>
+          <span class="progress-text">{{ progressDetail.completed_pns || 0 }}/{{ progressDetail.total_pns || 0 }} PN 完成</span>
+        </div>
       </div>
       <div class="wb-header-right">
         <span class="role-label">角色：</span>
@@ -64,6 +69,9 @@
                     <el-table-column prop="component_name" label="PN 名称" min-width="180"></el-table-column>
                     <el-table-column prop="category" label="品类" width="120"><template #default="{ row }"><el-tag size="small" type="info">{{ row.category }}</el-tag></template></el-table-column>
                     <el-table-column label="当前 Buyer" width="120"><template #default="{ row }"><span v-if="row.buyer_id">{{ getBuyerName(row.buyer_id) }}</span><el-tag v-else type="danger" size="small">未分派</el-tag></template></el-table-column>
+                    <el-table-column label="供应商" width="100"><template #default="{ row }"><el-tag :type="getSupplierSelectLabel(row.component_no).type" size="small">{{ getSupplierSelectLabel(row.component_no).text }}</el-tag></template></el-table-column>
+                    <!-- audit-round05: 管理员重分派 Buyer 始终可见 -->
+                    <el-table-column label="重分派" width="130" v-if="mockRole==='admin'"><template #default="{ row }"><el-select v-model="reassignMap[row.component_no]" size="small" placeholder="更换" style="width:90px" @change="(v: string) => handleReassignBuyer(row.component_no, v)"><el-option v-for="b in allBuyerIds" :key="b" :label="getBuyerName(b)" :value="b"></el-option></el-select></template></el-table-column>
                   </el-table>
                   <div class="sheet-actions">
                     <el-button type="primary" size="small" @click="handleAssignBuyers" :disabled="allBuyersAssigned" :loading="loading">自动分派 Buyer</el-button>
@@ -79,12 +87,15 @@
                 <div v-else-if="!allBuyersAssigned" class="empty-hint">请先在"Buyer 分派"页完成 PN 分派</div>
                 <div v-else>
                   <!-- PN List -->
-                  <h4 class="sheet-section-title">PN 列表</h4>
-                  <el-table :data="filteredComponents" stripe size="small" highlight-current-row @row-click="(row) => handleSelectPn(row.component_no)">
-                    <el-table-column prop="component_no" label="PN 编号" width="160"><template #default="{ row }"><el-link type="primary" :underline="false">{{ row.component_no }}</el-link></template></el-table-column>
-                    <el-table-column prop="component_name" label="名称" min-width="180"></el-table-column>
-                    <el-table-column prop="category" label="品类" width="100"><template #default="{ row }"><el-tag size="small">{{ row.category }}</el-tag></template></el-table-column>
-                    <el-table-column prop="buyer_id" label="Buyer" width="90"><template #default="{ row }">{{ getBuyerName(row.buyer_id) }}</template></el-table-column>
+                  <h4 class="sheet-section-title">PN 列表（含局部状态）</h4>
+                  <el-table :data="filteredComponents" stripe size="small" highlight-current-row @row-click="(row: any) => handleSelectPn(row.component_no)">
+                    <el-table-column prop="component_no" label="PN 编号" width="150"><template #default="{ row }"><el-link type="primary" :underline="false">{{ row.component_no }}</el-link></template></el-table-column>
+                    <el-table-column prop="component_name" label="名称" min-width="140"></el-table-column>
+                    <el-table-column prop="category" label="品类" width="90"><template #default="{ row }"><el-tag size="small">{{ row.category }}</el-tag></template></el-table-column>
+                    <el-table-column prop="buyer_id" label="Buyer" width="80"><template #default="{ row }">{{ getBuyerName(row.buyer_id) }}</template></el-table-column>
+                    <el-table-column label="供应商" width="90"><template #default="{ row }"><el-tag :type="getSupplierSelectLabel(row.component_no).type" size="small">{{ getSupplierSelectLabel(row.component_no).text }}</el-tag></template></el-table-column>
+                    <el-table-column label="RFQ" width="80"><template #default="{ row }"><el-tag :type="getPnRfqLabel(row.component_no).type" size="small">{{ getPnRfqLabel(row.component_no).text }}</el-tag></template></el-table-column>
+                    <el-table-column label="回传" width="90"><template #default="{ row }"><el-tag :type="getPnQuoteLabel(row.component_no).type" size="small">{{ getPnQuoteLabel(row.component_no).text }}</el-tag></template></el-table-column>
                     <el-table-column label="操作" width="70"><template #default="{ row }"><el-button size="small" type="primary" @click.stop="handleSelectPn(row.component_no)">进入</el-button></template></el-table-column>
                   </el-table>
 
@@ -92,60 +103,72 @@
                   <div v-if="activePn" style="margin-top:16px;border-top:2px solid #e4e7ed;padding-top:16px">
                     <h4 class="sheet-section-title">当前 PN：{{ activePn.component_no }} — {{ activePn.component_name }}</h4>
 
-                    <!-- 参数确认区 -->
+                    <!-- 参数确认区 audit-round05: 4状态机 -->
                     <el-collapse v-model="pnCollapseActive" style="margin-bottom:12px">
-                      <el-collapse-item title="📝 询价参数确认（系统预填 → 修改 → 确认）" name="params">
+                      <el-collapse-item :title="constraintCollapseTitle" name="params">
                         <el-form :model="constraintForm" label-width="100px" size="small" class="constraint-form">
                           <el-row :gutter="12">
-                            <el-col :span="8"><el-form-item label="加工方式"><el-input v-model="constraintForm.process_type"></el-input></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="表面处理"><el-input v-model="constraintForm.surface_treatment"></el-input></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="数量"><el-input-number v-model="constraintForm.quantity" :min="0" controls-position="right" style="width:100%"></el-input-number></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="加工方式"><el-input v-model="constraintForm.process_type" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="表面处理"><el-input v-model="constraintForm.surface_treatment" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="数量"><el-input-number v-model="constraintForm.quantity" :min="0" controls-position="right" style="width:100%" :disabled="!canEditRequirements"></el-input-number></el-form-item></el-col>
                           </el-row>
                           <el-row :gutter="12">
-                            <el-col :span="8"><el-form-item label="交付要求"><el-input v-model="constraintForm.delivery_requirement"></el-input></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="贸易术语"><el-select v-model="constraintForm.target_incoterm"><el-option v-for="t in ['DDP','FOB','CIF','EXW']" :key="t" :label="t" :value="t"></el-option></el-select></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="币种"><el-select v-model="constraintForm.currency_mode"><el-option v-for="c in ['RMB','EUR','USD']" :key="c" :label="c" :value="c"></el-option></el-select></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="交付要求"><el-input v-model="constraintForm.delivery_requirement" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="贸易术语"><el-select v-model="constraintForm.target_incoterm" :disabled="!canEditRequirements"><el-option v-for="t in ['DDP','FOB','CIF','EXW']" :key="t" :label="t" :value="t"></el-option></el-select></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="币种"><el-select v-model="constraintForm.currency_mode" :disabled="!canEditRequirements"><el-option v-for="c in ['RMB','EUR','USD']" :key="c" :label="c" :value="c"></el-option></el-select></el-form-item></el-col>
                           </el-row>
                           <el-row :gutter="12">
-                            <el-col :span="8"><el-form-item label="模具要求"><el-input v-model="constraintForm.mold_requirement"></el-input></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="包装"><el-input v-model="constraintForm.packing_requirement"></el-input></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="质量"><el-input v-model="constraintForm.quality_requirement"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="模具要求"><el-input v-model="constraintForm.mold_requirement" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="包装"><el-input v-model="constraintForm.packing_requirement" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="质量"><el-input v-model="constraintForm.quality_requirement" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
                           </el-row>
                           <el-row :gutter="12">
-                            <el-col :span="16"><el-form-item label="特殊说明"><el-input v-model="constraintForm.special_note" type="textarea" :rows="2"></el-input></el-form-item></el-col>
-                            <el-col :span="8"><el-form-item label="Cost Breakdown"><el-switch v-model="constraintForm.quotation_breakdown_required"></el-switch></el-form-item></el-col>
+                            <el-col :span="16"><el-form-item label="特殊说明"><el-input v-model="constraintForm.special_note" type="textarea" :rows="2" :disabled="!canEditRequirements"></el-input></el-form-item></el-col>
+                            <el-col :span="8"><el-form-item label="Cost Breakdown"><el-switch v-model="constraintForm.quotation_breakdown_required" :disabled="!canEditRequirements"></el-switch></el-form-item></el-col>
                           </el-row>
-                          <el-button type="primary" size="small" @click="handleSaveConstraint">保存约束</el-button>
-                          <el-button size="small" @click="handleRecommendSuppliers">推荐供应商</el-button>
+                          <el-button v-if="canEditRequirements" type="primary" size="small" @click="handleSaveConstraint">💾 保存约束</el-button>
+                          <el-button v-if="canModifyRequirements" type="warning" size="small" @click="handleModifyConstraint">✏️ 修改约束</el-button>
+                          <el-button v-if="showRecommendButton" size="small" @click="handleRecommendSuppliers">🔍 推荐供应商</el-button>
                         </el-form>
                       </el-collapse-item>
                     </el-collapse>
 
-                    <!-- 供应商推荐 -->
+                    <!-- 供应商推荐 audit-round05: 选择态/展示态分离 -->
                     <div v-if="recommendations.length > 0" style="margin-bottom:12px">
-                      <h4 class="sheet-section-title">候选供应商（规则推荐）</h4>
+                      <h4 class="sheet-section-title">候选供应商（规则推荐） — <el-tag :type="currentPnSupplierStatus === 'confirmed' ? 'success' : 'warning'" size="small">{{ currentPnSupplierStatus === 'confirmed' ? '✅ 已确认(展示态)' : '🔶 选择中' }}</el-tag></h4>
                       <el-table :data="recommendations" stripe size="small" @selection-change="handleSupplierSelectionChange">
-                        <el-table-column type="selection" width="35"></el-table-column>
-                        <el-table-column prop="supplier.name" label="供应商" min-width="140"></el-table-column>
+                        <el-table-column type="selection" width="35" :selectable="() => currentPnSupplierStatus === 'selecting'"></el-table-column>
+                        <el-table-column label="供应商" min-width="140">
+                          <template #default="{ row }">
+                            <el-link type="primary" :underline="false" @click="showSupplierDetail(row.supplier.id)">{{ row.supplier.name }}</el-link>
+                          </template>
+                        </el-table-column>
                         <el-table-column prop="score" label="评分" width="60"><template #default="{ row }"><el-tag :type="row.score>=70?'success':row.score>=50?'warning':'info'" size="small">{{ row.score }}</el-tag></template></el-table-column>
                         <el-table-column prop="supplier.country" label="国家" width="70"></el-table-column>
-                        <el-table-column prop="supplier.city" label="城市" width="80"></el-table-column>
                         <el-table-column label="能力标签" min-width="140"><template #default="{ row }"><el-tag v-for="t in row.supplier.capability_tags" :key="t" size="small" type="success" class="tag-item">{{ t }}</el-tag></template></el-table-column>
-                        <el-table-column label="推荐理由" min-width="200"><template #default="{ row }"><el-tag v-for="r in row.reasons" :key="r" size="small" type="info" class="tag-item">{{ r }}</el-tag></template></el-table-column>
+                        <el-table-column label="推荐理由" min-width="160"><template #default="{ row }"><el-tag v-for="r in row.reasons" :key="r" size="small" type="info" class="tag-item">{{ r }}</el-tag></template></el-table-column>
                       </el-table>
                       <div style="margin-top:8px">
-                        <el-button type="primary" size="small" @click="handleConfirmSuppliers" :disabled="selectedSuppliers.length<2">确认供应商 ({{ selectedSuppliers.length }})</el-button>
-                        <el-button size="small" @click="handlePrepareRFQ" :disabled="selectedSuppliers.length<2">生成 RFQ 预览</el-button>
-                        <el-button v-if="hasRfqPreview" size="small" type="warning" @click="handleSendRFQ" :disabled="rfqSent">📤 发送 RFQ</el-button>
-                        <el-button v-if="rfqSent && !allReplied" size="small" type="success" @click="handleMockReply">📥 模拟回传</el-button>
+                        <el-button v-if="currentPnSupplierStatus === 'selecting'" type="primary" size="small" @click="handleConfirmSuppliers" :disabled="selectedSuppliers.length<2">🔒 确认供应商 ({{ selectedSuppliers.length }})</el-button>
+                        <el-button v-if="canModifySuppliers" size="small" type="warning" @click="handleModifySuppliers">✏️ 修改供应商</el-button>
+                        <el-button v-if="canAddSupplier" size="small" type="info" @click="handleAddSupplier">➕ 添加供应商</el-button>
+                        <el-button v-if="canPrepareRfq" size="small" type="primary" @click="handlePrepareRFQ">📋 生成 RFQ 预览</el-button>
+                        <el-button v-if="canSendRfq && currentPnRfqStatus === 'prepared'" size="small" type="warning" @click="handleSendRFQ">📤 发送 RFQ</el-button>
+                        <el-button v-if="canSendRfq && currentPnRfqStatus === 'sent'" size="small" type="info" @click="handleViewSentRfq">📧 查看已发送 RFQ</el-button>
+                        <el-button v-if="canSendRfq && currentPnRfqStatus === 'sent'" size="small" type="warning" @click="handleResendRFQ">📤 重新发送 RFQ</el-button>
+                        <el-button v-if="canMockReply" size="small" type="success" @click="handleMockReply">📥 模拟{{ currentPnQuoteStatus === 'partial_replied' ? '全部' : '' }}回传</el-button>
                       </div>
                     </div>
 
-                    <!-- 供应商回传状态 + 报价 -->
+                    <!-- 供应商回传状态 + 报价 audit-round05: 供应商名可点击 -->
                     <div v-if="supplierQuotesList.length > 0" style="margin-bottom:12px">
                       <h4 class="sheet-section-title">供应商回传状态 ({{ supplierQuotesList.length }} 家)</h4>
                       <el-table :data="supplierQuotesList" stripe size="small">
-                        <el-table-column prop="supplier_name" label="供应商" width="140"></el-table-column>
+                        <el-table-column label="供应商" width="140">
+                          <template #default="{ row }">
+                            <el-link type="primary" :underline="false" @click="showSupplierDetail(row.supplier_id)">{{ row.supplier_name || row.supplier_id }}</el-link>
+                          </template>
+                        </el-table-column>
                         <el-table-column label="状态" width="120"><template #default="{ row }"><el-tag :type="getReplyStatusTag(row.supplier_id)" size="small">{{ getReplyStatusLabel(row.supplier_id) }}</el-tag></template></el-table-column>
                         <el-table-column prop="unit_price" label="单价" width="90"><template #default="{ row }">{{ row.unit_price }} {{ row.currency }}</template></el-table-column>
                         <el-table-column prop="tooling_cost" label="模具费" width="100"><template #default="{ row }">{{ fmtInt(row.tooling_cost) }}</template></el-table-column>
@@ -164,6 +187,27 @@
                           <p style="font-size:11px;color:#909399">{{ log.notes }}</p>
                         </el-timeline-item>
                       </el-timeline>
+                    </el-dialog>
+
+                    <!-- Supplier Detail Dialog (audit-round04) -->
+                    <el-dialog v-model="supplierDetailVisible" :title="'供应商详情：' + (supplierDetail?.name || '')" width="580px">
+                      <div v-if="!supplierDetail" class="empty-hint">暂无详情</div>
+                      <div v-else>
+                        <el-descriptions :column="2" border size="small">
+                          <el-descriptions-item label="名称">{{ supplierDetail.name }}</el-descriptions-item>
+                          <el-descriptions-item label="国家/地区">{{ supplierDetail.country }} {{ supplierDetail.city }}</el-descriptions-item>
+                          <el-descriptions-item label="评分">{{ supplierDetail.score }}</el-descriptions-item>
+                          <el-descriptions-item label="认证">{{ supplierDetail.certification || '-' }}</el-descriptions-item>
+                          <el-descriptions-item label="能力标签" :span="2"><el-tag v-for="t in supplierDetail.capability_tags" :key="t" size="small" style="margin-right:4px">{{ t }}</el-tag></el-descriptions-item>
+                        </el-descriptions>
+                        <h5 style="margin:12px 0 6px">历史报价记录</h5>
+                        <el-table :data="supplierQuoteHistory" stripe size="small" max-height="200">
+                          <el-table-column prop="pn" label="PN" width="140"></el-table-column>
+                          <el-table-column prop="unit_price" label="单价" width="80"></el-table-column>
+                          <el-table-column prop="lead_time_days" label="交期(天)" width="80"></el-table-column>
+                          <el-table-column prop="tooling_cost" label="模具费" width="90"><template #default="{ row }">{{ fmtInt(row.tooling_cost) }}</template></el-table-column>
+                        </el-table>
+                      </div>
                     </el-dialog>
 
                     <!-- Benchmark（底表） -->
@@ -195,15 +239,44 @@
               </div>
             </el-tab-pane>
 
-            <!-- Sheet 3: Sourcing File -->
+            <!-- Sheet 3: Sourcing File audit-round05: 含条件 deficiency 诊断 -->
             <el-tab-pane label="📁 Sourcing File" name="sourcing_file" :disabled="!canEnterSourcing">
               <div class="sheet-content">
-                <div v-if="!canEnterSourcing" class="empty-hint">请先完成 Benchmark 和 Award Summary 后进入</div>
-                <div v-else-if="!sourcingPreview">
+                <div v-if="!canEnterSourcing" class="empty-hint">
+                  <p>所有 PN 必须完成全部条件后才能生成 Sourcing File</p>
+                  <p style="font-size:12px;color:#909399">当前进度：{{ progressDetail.completed_pns || 0 }}/{{ progressDetail.total_pns || 0 }} PN 完成</p>
+                </div>
+                <!-- audit-round05: per-PN deficiency 诊断表 -->
+                <div v-if="sourcingConditions.length > 0" style="margin-bottom:12px">
+                  <h4 class="sheet-section-title">📋 各 PN 条件检查</h4>
+                  <el-table :data="sourcingConditions" stripe size="small" border>
+                    <el-table-column prop="component_id" label="PN" width="160"></el-table-column>
+                    <el-table-column label="约束已保存" width="90">
+                      <template #default="{ row }"><el-tag :type="row.constraint_saved ? 'success' : 'danger'" size="small">{{ row.constraint_saved ? '✅' : '❌' }}</el-tag></template>
+                    </el-table-column>
+                    <el-table-column label="供应商≥2" width="90">
+                      <template #default="{ row }"><el-tag :type="row.suppliers_confirmed ? 'success' : 'danger'" size="small">{{ row.suppliers_confirmed ? '✅' : '❌' }}</el-tag></template>
+                    </el-table-column>
+                    <el-table-column label="RFQ已发" width="80">
+                      <template #default="{ row }"><el-tag :type="row.rfq_sent ? 'success' : 'danger'" size="small">{{ row.rfq_sent ? '✅' : '❌' }}</el-tag></template>
+                    </el-table-column>
+                    <el-table-column label="全部回传" width="80">
+                      <template #default="{ row }"><el-tag :type="row.all_replied ? 'success' : 'danger'" size="small">{{ row.all_replied ? '✅' : '❌' }}</el-tag></template>
+                    </el-table-column>
+                    <el-table-column label="总评" width="70">
+                      <template #default="{ row }"><el-tag :type="row.all_met ? 'success' : 'info'" size="small">{{ row.all_met ? '✅' : '⏳' }}</el-tag></template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+                <div v-else-if="state.components.length === 0" class="empty-hint">暂无 PN 数据</div>
+                <div v-if="!sourcingPreview && canGenerateSourcing">
                   <el-alert title="条件满足，可以生成 Sourcing File" type="success" :closable="false" show-icon style="margin-bottom:12px"></el-alert>
                   <el-button type="primary" @click="handleGenerateSourcingFile" :loading="loading">生成 Sourcing File（演示）</el-button>
                 </div>
-                <div v-else>
+                <div v-else-if="!canGenerateSourcing && state.components.length > 0">
+                  <el-alert title="条件不满足：部分 PN 未完成全部 4 项条件" type="warning" :closable="false" show-icon style="margin-bottom:12px"></el-alert>
+                </div>
+                <div v-if="sourcingPreview">
                   <h4>Sourcing File 预览</h4>
                   <el-descriptions :column="2" border size="small">
                     <el-descriptions-item label="文件名">{{ sourcingPreview.file_meta?.filename }}</el-descriptions-item>
@@ -273,6 +346,17 @@ const state = reactive({
   supplier_candidates: {} as Record<string, any>, rfq_previews: {} as Record<string, any>,
   constraint_forms: {} as Record<string, any>,
   buyer_perspective: null as string | null,
+  mail_logs: {} as Record<string, Record<string, any[]>>,
+  // audit-round05: PN-level local states (field names match backend snapshot)
+  progress: null as any,
+  requirement_status: {} as Record<string, string>,
+  supplier_selection_status: {} as Record<string, string>,
+  rfq_status: {} as Record<string, string>,
+  quote_collection_status: {} as Record<string, string>,
+  confirmed_supplier_ids: {} as Record<string, string[]>,
+  selected_supplier_ids: {} as Record<string, string[]>,
+  pn_is_first_entry: {} as Record<string, boolean>,
+  pn_rfq_sent_count: {} as Record<string, number>,
 })
 const constraintForm = reactive({ process_type:'',surface_treatment:'',quantity:0,target_incoterm:'DDP',currency_mode:'RMB', delivery_requirement:'',mold_requirement:'',packing_requirement:'',quality_requirement:'', special_note:'',quotation_breakdown_required:true, quantity_unit:'pcs',material_spec:'' })
 const recommendations = ref<any[]>([])
@@ -288,6 +372,16 @@ const mailLogVisible = ref(false)
 const currentMailLogs = ref<any[]>([])
 const allBuyers = ref<any[]>([])
 
+// audit-round04: new UI state
+const supplierDetailVisible = ref(false)
+const supplierDetail = ref<any>(null)
+const supplierQuoteHistory = ref<any[]>([])
+const reassignMap = reactive<Record<string, string>>({})
+
+const allBuyerIds = ['buyer_zhang', 'buyer_li', 'buyer_wang', 'buyer_zhao', 'buyer_sun', 'buyer_pool']
+
+const sourcingConditions = ref<any[]>([])
+
 // === 计算属性 ===
 const statusLight = computed(() => {
   const m: any = { ebom_imported:{color:'info',label:'待分派'}, buyer_assigned:{color:'',label:'Buyer已分派'}, rfq_prepared:{color:'warning',label:'RFQ已备'}, rfq_sent:{color:'',label:'RFQ已发'}, supplier_feedback_in_progress:{color:'warning',label:'等待回传'}, benchmark_ready:{color:'success',label:'Benchmark就绪'}, sourcing_file_ready:{color:'success',label:'可生成文件'}, sourcing_file_generated:{color:'success',label:'已完成'} }
@@ -298,18 +392,128 @@ const filteredComponents = computed(() => {
   if (mockRole.value === 'admin') return state.components
   return state.components.filter((c: any) => c.buyer_id === mockRole.value)
 })
-const hasRfqPreview = computed(() => !!state.active_component_id && !!state.rfq_previews[state.active_component_id])
-const rfqSent = computed(() => {
-  const m: any = { ebom_imported:0,buyer_assigned:0,rfq_prepared:0 }
-  return !!(m[state.status] === undefined || state.status === 'rfq_sent' || state.status === 'supplier_feedback_in_progress' || state.status === 'benchmark_ready' || state.status === 'sourcing_file_ready' || state.status === 'sourcing_file_generated')
+
+// audit-round05: PN-level permission selectors
+const currentPnReqStatus = computed(() => state.requirement_status[state.active_component_id || ''] || 'first_entry_editing')
+const currentPnSupplierStatus = computed(() => state.supplier_selection_status[state.active_component_id || ''] || 'not_started')
+const currentPnRfqStatus = computed(() => state.rfq_status[state.active_component_id || ''] || 'not_prepared')
+const currentPnQuoteStatus = computed(() => state.quote_collection_status[state.active_component_id || ''] || 'none_replied')
+const currentPnIsFirstEntry = computed(() => currentPnReqStatus.value === 'first_entry_editing')
+
+// audit-round05: 4状态约束折叠标题
+const constraintCollapseTitle = computed(() => {
+  const m: Record<string, string> = {
+    first_entry_editing: '📝 首次录入 — 询价参数确认',
+    saved_locked: '📝 询价参数（只读 ✓ 已保存）',
+    manual_editing: '✏️ 修改中 — 询价参数确认',
+    manual_saved_locked: '📝 询价参数（只读 ✓ 已保存）',
+  }
+  return m[currentPnReqStatus.value] || '📝 询价参数'
 })
-const allReplied = computed(() => state.status === 'benchmark_ready' || state.status === 'sourcing_file_ready' || state.status === 'sourcing_file_generated')
+
+// Button permissions per-PN (role-aware)
+const canEditRequirements = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  if (mockRole.value !== 'admin') {
+    const comp = state.components.find((c: any) => c.component_no === cid)
+    if (!comp || comp.buyer_id !== mockRole.value) return false
+  }
+  return currentPnReqStatus.value === 'first_entry_editing' || currentPnReqStatus.value === 'manual_editing'
+})
+const canModifyRequirements = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  if (mockRole.value !== 'admin') return false
+  return currentPnReqStatus.value === 'saved_locked' || currentPnReqStatus.value === 'manual_saved_locked'
+})
+const showRecommendButton = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  return currentPnReqStatus.value === 'saved_locked' || currentPnReqStatus.value === 'manual_saved_locked'
+    || currentPnReqStatus.value === 'first_entry_editing' || currentPnReqStatus.value === 'manual_editing'
+})
+const canConfirmSuppliers = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  return currentPnSupplierStatus.value === 'selecting'
+})
+const canModifySuppliers = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  if (currentPnSupplierStatus.value !== 'confirmed') return false
+  if (mockRole.value === 'admin') return true
+  const comp = state.components.find((c: any) => c.component_no === cid)
+  return !!(comp && comp.buyer_id === mockRole.value)
+})
+const canAddSupplier = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  if (!['confirmed', 'selecting'].includes(currentPnSupplierStatus.value)) return false
+  if (mockRole.value === 'admin') return true
+  const comp = state.components.find((c: any) => c.component_no === cid)
+  return !!(comp && comp.buyer_id === mockRole.value)
+})
+const canPrepareRfq = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  if (currentPnSupplierStatus.value !== 'confirmed') return false
+  if (currentPnRfqStatus.value !== 'not_prepared') return false
+  const hasConfirmed = (state.confirmed_supplier_ids[cid] || []).length >= 2
+  return hasConfirmed
+})
+const canSendRfq = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  const hasConfirmed = (state.confirmed_supplier_ids[cid] || []).length >= 2
+  if (!hasConfirmed) return false
+  if (mockRole.value !== 'admin') {
+    const comp = state.components.find((c: any) => c.component_no === cid)
+    if (!comp || comp.buyer_id !== mockRole.value) return false
+  }
+  return currentPnRfqStatus.value === 'prepared' || currentPnRfqStatus.value === 'sent'
+})
+const canMockReply = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  return mockRole.value === 'admin' && currentPnRfqStatus.value === 'sent' && currentPnQuoteStatus.value !== 'all_replied'
+})
+const canGenerateBenchmark = computed(() => {
+  const cid = state.active_component_id; if (!cid) return false
+  return currentPnQuoteStatus.value === 'all_replied'
+})
+const canEnterSourcing = computed(() => state.components.length > 0)
+const canGenerateSourcing = computed(() => sourcingConditions.value.length > 0 && sourcingConditions.value.every((c: any) => c.all_met))
+
+// 进度条
+const progressPercent = computed(() => state.progress?.pct || 0)
+const progressDetail = computed(() => state.progress || {})
+
+// RFQ Modal
+const rfqSent = computed(() => currentPnRfqStatus.value === 'sent')
+
+// RFQ 按钮文本（区分首次/二次）
+const rfqSendButtonText = computed(() => (state.pn_rfq_sent_count[state.active_component_id || ''] || 0) > 0 ? '📤 重新发送 RFQ' : '📤 发送 RFQ')
+
 const supplierQuotesList = computed(() => {
   if (!state.active_component_id) return []
   const quotes = state.supplier_quotes[state.active_component_id] || {}
   return Object.values(quotes)
 })
-const canEnterSourcing = computed(() => ['benchmark_ready','sourcing_file_ready','sourcing_file_generated'].includes(state.status))
+
+// 供应商三态标签
+function getSupplierSelectLabel(cid: string) {
+  const st = state.supplier_selection_status[cid]
+  if (st === 'confirmed') return { text: '已确认', type: 'success' }
+  if (st === 'selecting') return { text: '选择中', type: 'warning' }
+  return { text: '待选择', type: 'info' }
+}
+function getPnRfqLabel(cid: string) {
+  const st = state.rfq_status[cid]
+  if (st === 'sent') return { text: '已发送', type: 'success' }
+  if (st === 'prepared') return { text: '已备', type: 'warning' }
+  return { text: '未备', type: 'info' }
+}
+function getPnQuoteLabel(cid: string) {
+  const st = state.quote_collection_status[cid]
+  if (st === 'all_replied') return { text: '全部回传', type: 'success' }
+  if (st === 'partial_replied') return { text: '部分回传', type: 'warning' }
+  return { text: '未回传', type: 'info' }
+}
+
+// audit-round05: sourcing conditions
+
 const rfqConstraintData = computed(() => {
   if (!rfqPreview.value?.constraint_summary) return []
   return Object.entries(rfqPreview.value.constraint_summary).map(([k,v]) => ({ label: k, value: typeof v === 'boolean' ? (v ? '是' : '否') : (v || '-') }))
@@ -354,6 +558,8 @@ async function refreshState() {
     const data = await apiGet('/state')
     Object.assign(state, data)
     if (state.project) selectedEbom.value = true
+    // audit-round05: 同步拉取 sourcing file 条件
+    try { const sc = await apiGet('/sourcing-file/status'); sourcingConditions.value = sc.conditions || [] } catch (e) { /* ignore */ }
   } catch (e) { console.error('Failed to load state:', e) }
 }
 
@@ -384,45 +590,155 @@ async function handleSelectPn(componentNo: string) {
 // === 约束 & 供应商 ===
 async function handleSaveConstraint() {
   if (!state.active_component_id) return
-  try { await apiPost(`/constraint-form/${state.active_component_id}`, { ...constraintForm }); ElMessage.success('约束已保存') }
-  catch (e: any) { ElMessage.error('保存失败') }
+  try {
+    await apiPost(`/constraint-form/${state.active_component_id}`, { ...constraintForm })
+    await refreshState()
+    ElMessage.success('约束已保存')
+  } catch (e: any) { ElMessage.error('保存失败') }
+}
+
+// audit-round05: 修改约束（从锁定态进入手动编辑）
+async function handleModifyConstraint() {
+  if (!state.active_component_id) return
+  try {
+    await apiPut(`/constraint-form/${state.active_component_id}/modify`)
+    await refreshState()
+    ElMessage.success('约束已解锁，请修改后保存')
+  } catch (e: any) { ElMessage.error('修改失败: ' + (e?.response?.data?.message || e?.message || '')) }
 }
 async function handleRecommendSuppliers() {
   if (!state.active_component_id) { ElMessage.warning('请先选择 PN'); return }
-  try { await handleSaveConstraint(); const data = await apiGet(`/supplier/recommend/${state.active_component_id}`); recommendations.value = data.recommendations }
-  catch (e: any) { ElMessage.error('推荐失败') }
+  try {
+    await handleSaveConstraint()
+    const data = await apiGet(`/supplier/recommend/${state.active_component_id}`)
+    recommendations.value = data.recommendations
+    await refreshState()
+  } catch (e: any) { ElMessage.error('推荐失败') }
 }
 function handleSupplierSelectionChange(sel: any[]) { selectedSuppliers.value = sel }
 async function handleConfirmSuppliers() {
   if (!state.active_component_id || selectedSuppliers.value.length < 2) { ElMessage.warning('请至少选2家'); return }
-  try { const ids = selectedSuppliers.value.map((s: any) => s.supplier.id); await apiPost('/supplier/select', { component_id: state.active_component_id, supplier_ids: ids }); ElMessage.success(`已选择 ${ids.length} 家`) }
+  try { const ids = selectedSuppliers.value.map((s: any) => s.supplier.id); await apiPost('/supplier/select', { component_id: state.active_component_id, supplier_ids: ids }); await refreshState(); ElMessage.success(`已确认 ${ids.length} 家供应商`) }
   catch (e: any) { ElMessage.error('确认失败') }
+}
+
+// audit-round04: 修改已确认的供应商（回到选择中状态）
+async function handleModifySuppliers() {
+  if (!state.active_component_id) return
+  try {
+    await apiPut(`/component/${state.active_component_id}/supplier-modify`)
+    await refreshState()
+    // 重新加载推荐
+    const data = await apiGet(`/supplier/recommend/${state.active_component_id}`)
+    recommendations.value = data.recommendations
+    selectedSuppliers.value = []
+    ElMessage.success('供应商选择已解锁，可重新选择')
+  } catch (e: any) { ElMessage.error('修改失败: ' + (e?.response?.data?.message || e?.message || '')) }
+}
+
+// audit-round04: 管理员重分派 Buyer
+async function handleReassignBuyer(componentNo: string, newBuyerId: string) {
+  if (mockRole.value !== 'admin') return
+  try {
+    await apiPut('/buyer/reassign', { component_no: componentNo, buyer_id: newBuyerId })
+    await refreshState()
+    ElMessage.success(`PN ${componentNo} Buyer 已更新为 ${getBuyerName(newBuyerId)}`)
+  } catch (e: any) { ElMessage.error('重分派失败: ' + (e?.response?.data?.message || e?.message || '')) }
+}
+
+// audit-round04: 供应商详情
+async function showSupplierDetail(supplierId: string) {
+  const cid = state.active_component_id; if (!cid) return
+  try {
+    const data = await apiGet(`/supplier/${supplierId}/detail?component_id=${cid}`)
+    supplierDetail.value = data.supplier || null
+    supplierQuoteHistory.value = data.history || []
+    supplierDetailVisible.value = true
+  } catch (e) { supplierDetailVisible.value = true }
 }
 
 // === RFQ ===
 async function handlePrepareRFQ() {
-  if (!state.active_component_id || selectedSuppliers.value.length < 2) { ElMessage.warning('请至少选2家'); return }
-  try { const ids = selectedSuppliers.value.map((s: any) => s.supplier.id); const data = await apiPost('/rfq/preview', { component_id: state.active_component_id, supplier_ids: ids }); rfqPreview.value = data.preview; rfqEmailPreview.value = data.email_preview; await refreshState(); rfqModalVisible.value = true; rfqModalTab.value = 'mail_body' }
-  catch (e: any) { ElMessage.error('生成RFQ失败: ' + (e?.response?.data?.message || e?.message || '')) }
+  const cid = state.active_component_id; if (!cid) { ElMessage.warning('请先选择 PN'); return }
+  const sids = state.confirmed_supplier_ids[cid] || []
+  if (sids.length < 2) { ElMessage.warning('请先确认供应商（>=2家）'); return }
+  try {
+    const data = await apiPost('/rfq/preview', { component_id: cid, supplier_ids: sids })
+    rfqPreview.value = data.preview; rfqEmailPreview.value = data.email_preview
+    await refreshState(); rfqModalVisible.value = true; rfqModalTab.value = 'mail_body'
+  } catch (e: any) { ElMessage.error('生成RFQ失败: ' + (e?.response?.data?.message || e?.message || '')) }
 }
 async function handleSendRFQ() {
-  if (!state.active_component_id) return
+  const cid = state.active_component_id; if (!cid) return
   try {
-    const candidates = state.supplier_candidates[state.active_component_id] || []
-    const sids = candidates.map((c: any) => c.id || c.supplier_id)
-    if (sids.length === 0) { ElMessage.warning('请先选择供应商'); return }
-    await apiPost('/rfq/send', { component_id: state.active_component_id, supplier_ids: sids })
+    const sids = state.confirmed_supplier_ids[cid] || []
+    if (sids.length === 0) { ElMessage.warning('请先确认供应商'); return }
+    await apiPost('/rfq/send', { component_id: cid, supplier_ids: sids })
     await refreshState(); rfqModalVisible.value = false; ElMessage.success('RFQ 已发送（演示模式）')
   } catch (e: any) { ElMessage.error('发送失败: ' + (e?.response?.data?.message || e?.message || '')) }
 }
+
+// audit-round05: 查看已发送的RFQ（不重新发送）
+async function handleViewSentRfq() {
+  const cid = state.active_component_id; if (!cid) return
+  // 复用已保存的 rfq_preview
+  const preview = state.rfq_previews[cid]
+  if (preview) {
+    rfqPreview.value = preview
+    // 重新生成 email preview
+    const sids = state.confirmed_supplier_ids[cid] || []
+    const supplierInfoMap: Record<string, any> = {}
+    for (const sid of sids) { supplierInfoMap[sid] = { id: sid, name: sid } }
+    rfqEmailPreview.value = preview.email_body || ''
+    rfqModalVisible.value = true
+    rfqModalTab.value = 'mail_body'
+  } else {
+    ElMessage.warning('暂无 RFQ 预览，请先生成')
+  }
+}
+
+// audit-round05: 重新发送RFQ（sent状态下的再次发送）
+async function handleResendRFQ() {
+  const cid = state.active_component_id; if (!cid) return
+  try {
+    const sids = state.confirmed_supplier_ids[cid] || []
+    if (sids.length === 0) { ElMessage.warning('请先确认供应商'); return }
+    await apiPost('/rfq/send', { component_id: cid, supplier_ids: sids })
+    await refreshState()
+    ElMessage.success('RFQ 已重新发送（演示模式）')
+  } catch (e: any) { ElMessage.error('重新发送失败: ' + (e?.response?.data?.message || e?.message || '')) }
+}
+
+// audit-round05: 添加供应商
+async function handleAddSupplier() {
+  ElMessage.info('添加供应商功能（demo 阶段：重新进入选择模式以调整名单）')
+  if (!state.active_component_id) return
+  try {
+    await apiPut(`/component/${state.active_component_id}/supplier-modify`)
+    await refreshState()
+    const data = await apiGet(`/supplier/recommend/${state.active_component_id}`)
+    recommendations.value = data.recommendations
+    selectedSuppliers.value = []
+  } catch (e: any) { ElMessage.error('操作失败') }
+}
 async function handleSendRFQFromModal() { rfqModalVisible.value = false; await handleSendRFQ() }
 
-// === Mock 回传 ===
+// === Mock 回传 (audit-round04: 区分部分/全部回传) ===
 async function handleMockReply() {
-  if (!state.active_component_id) return
+  const cid = state.active_component_id; if (!cid) return
   loading.value = true
-  try { await apiPost('/supplier/mock-reply', { component_id: state.active_component_id }); await refreshState(); ElMessage.success('模拟回传完成') }
-  catch (e: any) { ElMessage.error('回传失败: ' + (e?.response?.data?.message || e?.message || '')) }
+  try {
+    const confirmSids = state.confirmed_supplier_ids[cid] || []
+    const existingQuotes = state.supplier_quotes[cid] || {}
+    const existingSids = Object.keys(existingQuotes).filter(sid => existingQuotes[sid])
+    // 找出未回传的供应商，全部模拟回传
+    const missingSids = confirmSids.filter((sid: string) => !existingSids.includes(sid))
+    const allSids = missingSids.length > 0 ? [...existingSids, ...missingSids] : existingSids
+    if (allSids.length === 0) { ElMessage.warning('无已确认供应商'); return }
+    await apiPost('/supplier/mock-reply', { component_id: cid, supplier_ids: allSids })
+    await refreshState()
+    ElMessage.success(`模拟回传完成（${allSids.length}家）`)
+  } catch (e: any) { ElMessage.error('回传失败: ' + (e?.response?.data?.message || e?.message || '')) }
   finally { loading.value = false }
 }
 
@@ -474,9 +790,11 @@ async function handleQuickInit() {
     selectedEbom.value = true
     activeSheet.value = 'supplier'
     const firstPn = state.components[0]
-    if (firstPn) { activePn.value = firstPn; try { const fd = await apiGet(`/constraint-form/${firstPn.component_no}`); if (fd) Object.assign(constraintForm, fd) } catch (e) { /* ignore */ } }
-    if (comparisonBase.value) { try { await apiGet('/sourcing-file/status') } catch (e) { /* ignore */ } }
-    ElMessage.success('Demo 初始化完成')
+    if (firstPn) {
+      activePn.value = firstPn
+      try { const fd = await apiGet(`/constraint-form/${firstPn.component_no}`); if (fd) Object.assign(constraintForm, fd) } catch (e) { /* ignore */ }
+    }
+    ElMessage.success(`Demo 初始化完成 | ${data.component_count} PN | ${progressDetail.completed_pns || 0}/${progressDetail.total_pns || 0} 已完成`)
   } catch (e: any) { ElMessage.error('初始化失败: ' + (e?.response?.data?.message || e?.message || '')) }
   finally { loading.value = false }
 }
@@ -487,6 +805,7 @@ async function handleReset() {
     state.status = 'ebom_imported'; state.project = null; state.components = []; state.active_component_id = null
     rfqPreview.value = null; rfqEmailPreview.value = ''; awardSummary.value = null; comparisonBase.value = null; sourcingPreview.value = null
     recommendations.value = []; selectedSuppliers.value = []; activePn.value = null; selectedEbom.value = false; allBuyers.value = []
+    sourcingConditions.value = []
     ElMessage.success('已重置')
   } catch (e) { console.error('Reset failed:', e) }
 }
@@ -524,4 +843,6 @@ onMounted(() => { refreshState() })
 .empty-hint { text-align: center; color: #909399; padding: 40px 0; font-size: 13px; }
 .constraint-form { max-width: 100%; }
 .tag-item { margin-right: 4px; margin-bottom: 3px; }
+.progress-bar-wrap { display: flex; align-items: center; gap: 8px; }
+.progress-text { font-size: 11px; color: #909399; white-space: nowrap; }
 </style>

@@ -20,7 +20,7 @@ import { generateQuoteReview } from '../domain/quotation/quote-review.js';
 import { generateRfqSendLog, mockSupplierReply, mockBatchReplies } from '../domain/email/mock-email.js';
 import { canGenerateSourcingFile, generateSourcingFilePreview } from '../domain/sourcing/sourcing-file.js';
 import demoState from '../state/demo-state.js';
-import { STATUS, STATUS_ORDER } from '../state/state-constants.js';
+import { STATUS, STATUS_ORDER, PN_REQUIREMENT_STATUS, PN_SUPPLIER_SELECTION_STATUS, PN_RFQ_STATUS, PN_QUOTE_COLLECTION_STATUS } from '../state/state-constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -64,6 +64,7 @@ export default function createRoutes(context) {
     try {
       const snapshot = demoState.snapshot;
       snapshot.available_actions = demoState.get_available_actions();
+      snapshot.progress = demoState.get_completion_progress();
       ctx.success(snapshot);
     } catch (error) {
       ctx.error(error.message, 500);
@@ -191,6 +192,42 @@ export default function createRoutes(context) {
     }
   });
 
+  /**
+   * PUT /buyer/reassign
+   * 管理员手动修改单个 PN 的 Buyer 分派（audit-round05 统一字段 component_no）
+   * Body: { component_no: string, buyer_id: string }
+   */
+  router.put('/buyer/reassign', async (ctx) => {
+    try {
+      const { component_no, component_id, buyer_id } = ctx.request.body;
+      // audit-round05: 兼容 component_id 旧调用，统一为 component_no
+      const effectiveComponentNo = component_no || component_id;
+      if (!effectiveComponentNo || !buyer_id) {
+        ctx.error('请提供 component_no 和 buyer_id', 400);
+        return;
+      }
+      const components = demoState.snapshot.components;
+      const index = components.findIndex(c => c.component_no === effectiveComponentNo);
+      if (index === -1) {
+        ctx.error('未找到指定 PN', 404);
+        return;
+      }
+      const allBuyers = getAllBuyers();
+      if (!allBuyers.find(b => b.id === buyer_id)) {
+        ctx.error('无效的 Buyer ID', 400);
+        return;
+      }
+      components[index] = { ...components[index], buyer_id };
+      demoState.set_components(components);
+      ctx.success({
+        component: components[index],
+        message: `PN ${effectiveComponentNo} Buyer 已改为 ${buyer_id}`,
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
   // ==================== Component 路由 ====================
 
   /**
@@ -207,6 +244,50 @@ export default function createRoutes(context) {
       }
       demoState.set_active_component(component_id);
       ctx.success({ active_component: comp });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  // audit-round04: 解锁已确认的供应商选择
+  router.put('/component/:component_id/supplier-modify', async (ctx) => {
+    try {
+      const { component_id } = ctx.params;
+      demoState.reset_supplier_selection(component_id);
+      ctx.success({ component_id, status: 'selecting' });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  // audit-round04: 供应商详情（含历史报价）
+  router.get('/supplier/:id/detail', async (ctx) => {
+    try {
+      const { id } = ctx.params;
+      const { component_id } = ctx.query;
+      const supplier = getSupplierById(id);
+      if (!supplier) {
+        ctx.error('供应商不存在', 404);
+        return;
+      }
+
+      // 从已加载的报价中提取历史数据
+      const history = [];
+      const quotesMap = demoState.snapshot.supplier_quotes || {};
+      for (const [cid, sq] of Object.entries(quotesMap)) {
+        if (sq[id]) {
+          const q = sq[id];
+          history.push({
+            pn: cid,
+            unit_price: q.unit_price,
+            lead_time_days: q.lead_time_days,
+            tooling_cost: q.tooling_cost,
+            currency: q.currency || 'RMB',
+          });
+        }
+      }
+
+      ctx.success({ supplier, history });
     } catch (error) {
       ctx.error(error.message, 500);
     }
@@ -240,7 +321,7 @@ export default function createRoutes(context) {
 
   /**
    * POST /constraint-form/:component_id
-   * 保存约束表单
+   * 保存约束表单 + audit-round05 状态机自动推进
    */
   router.post('/constraint-form/:component_id', async (ctx) => {
     try {
@@ -257,10 +338,41 @@ export default function createRoutes(context) {
       }
 
       demoState.set_constraint_form(component_id, formData);
+
+      // audit-round05: 保存时按4状态机推进
+      const currentReqStatus = demoState.get_requirement_status(component_id);
+      if (currentReqStatus === PN_REQUIREMENT_STATUS.FIRST_ENTRY_EDITING) {
+        demoState.set_requirement_status(component_id, PN_REQUIREMENT_STATUS.SAVED_LOCKED);
+        demoState._state.pn_is_first_entry = demoState._state.pn_is_first_entry || {};
+        demoState._state.pn_is_first_entry[component_id] = false;
+      } else if (currentReqStatus === PN_REQUIREMENT_STATUS.MANUAL_EDITING) {
+        demoState.set_requirement_status(component_id, PN_REQUIREMENT_STATUS.MANUAL_SAVED_LOCKED);
+      }
+
       ctx.success({
         form: demoState.get_constraint_form(component_id),
         validation,
       });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  /**
+   * PUT /constraint-form/:component_id/modify
+   * audit-round05: 从锁定态进入手动编辑态
+   */
+  router.put('/constraint-form/:component_id/modify', async (ctx) => {
+    try {
+      const { component_id } = ctx.params;
+      const current = demoState.get_requirement_status(component_id);
+      if (current !== PN_REQUIREMENT_STATUS.SAVED_LOCKED
+        && current !== PN_REQUIREMENT_STATUS.MANUAL_SAVED_LOCKED) {
+        ctx.error('当前状态不允许修改约束', 400);
+        return;
+      }
+      demoState.set_requirement_status(component_id, PN_REQUIREMENT_STATUS.MANUAL_EDITING);
+      ctx.success({ component_id, requirement_status: PN_REQUIREMENT_STATUS.MANUAL_EDITING });
     } catch (error) {
       ctx.error(error.message, 500);
     }
@@ -271,6 +383,7 @@ export default function createRoutes(context) {
   /**
    * GET /supplier/recommend/:component_id
    * 为指定 component 推荐供应商
+   * audit-round05: 推荐后自动设置 supplier_selection_status 为 selecting
    */
   router.get('/supplier/recommend/:component_id', async (ctx) => {
     try {
@@ -282,6 +395,14 @@ export default function createRoutes(context) {
       }
       const constraintForm = demoState.get_constraint_form(component_id);
       const recommendations = recommendSuppliers(comp, constraintForm);
+
+      // audit-round05: 推荐后自动进入选择态
+      const currentSelStatus = demoState.get_supplier_selection_status(component_id);
+      if (currentSelStatus === PN_SUPPLIER_SELECTION_STATUS.NOT_STARTED
+        || currentSelStatus === PN_SUPPLIER_SELECTION_STATUS.CONFIRMED) {
+        demoState.set_supplier_selection_status(component_id, PN_SUPPLIER_SELECTION_STATUS.SELECTING);
+      }
+
       ctx.success({
         component_id,
         recommendations,
@@ -311,6 +432,12 @@ export default function createRoutes(context) {
       });
 
       demoState.set_supplier_candidates(component_id, suppliers);
+
+      // 确认供应商（audit-round04：PN 级状态）
+      demoState.set_selected_supplier_ids(component_id, supplier_ids);
+      demoState.set_confirmed_supplier_ids(component_id, supplier_ids);
+      demoState.set_supplier_selection_status(component_id, PN_SUPPLIER_SELECTION_STATUS.CONFIRMED);
+
       ctx.success({
         component_id,
         selected_suppliers: suppliers,
@@ -356,7 +483,8 @@ export default function createRoutes(context) {
       const emailPreview = generateRFQEmailPreview(preview);
 
       demoState.set_rfq_preview(component_id, preview);
-      demoState.safe_transition(STATUS.RFQ_PREPARED);
+      // PN 级 RFQ 状态设为 prepared（audit-round04）
+      demoState.set_rfq_status(component_id, PN_RFQ_STATUS.PREPARED);
 
       ctx.success({
         preview,
@@ -616,7 +744,9 @@ export default function createRoutes(context) {
         sendLogs.push(logEntry);
       }
 
-      demoState.safe_transition(STATUS.RFQ_SENT);
+      // PN 级 RFQ 状态设为 sent（不再是全局状态）
+      demoState.set_rfq_status(component_id, PN_RFQ_STATUS.SENT);
+      demoState.increment_rfq_sent_count(component_id);
 
       ctx.success({
         component_id,
@@ -643,18 +773,15 @@ export default function createRoutes(context) {
         return;
       }
 
-      // 确定要 mock 回邮的供应商列表
-      const state = demoState.snapshot;
+      // 确定要 mock 回邮的供应商列表 - 使用 confirmed_supplier_ids
+      const confirmedIds = demoState.get_confirmed_supplier_ids(component_id);
       let targetSupplierIds = supplier_ids;
       if (!targetSupplierIds || targetSupplierIds.length === 0) {
-        // 自动从 supplier_candidates 和已有报价中推断
-        const candidates = state.supplier_candidates[component_id] || [];
-        const quoteSids = Object.keys(state.supplier_quotes[component_id] || {});
-        targetSupplierIds = [...new Set([...candidates.map(c => c.id || c.supplier_id), ...quoteSids])];
+        targetSupplierIds = confirmedIds.length > 0 ? [...confirmedIds] : [];
       }
 
       if (targetSupplierIds.length === 0) {
-        ctx.error('未找到可触发回邮的供应商', 400);
+        ctx.error('未找到可触发回邮的供应商，请先确认供应商', 400);
         return;
       }
 
@@ -672,8 +799,15 @@ export default function createRoutes(context) {
         }
       }
 
+      // PN 级报价回传状态更新
       if (result.summary.success > 0) {
-        demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
+        const confirmedCount = confirmedIds.length;
+        const quotedCount = Object.keys(demoState.snapshot.supplier_quotes[component_id] || {}).length;
+        if (quotedCount >= confirmedCount && confirmedCount > 0) {
+          demoState.set_quote_collection_status(component_id, PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED);
+        } else if (quotedCount > 0) {
+          demoState.set_quote_collection_status(component_id, PN_QUOTE_COLLECTION_STATUS.PARTIAL_REPLIED);
+        }
       }
 
       ctx.success({
@@ -705,12 +839,14 @@ export default function createRoutes(context) {
 
   /**
    * GET /sourcing-file/status
-   * 检查 sourcing file 生成条件
+   * 检查 sourcing file 生成条件 - audit-round05 4条件聚合
    */
   router.get('/sourcing-file/status', async (ctx) => {
     try {
-      const status = canGenerateSourcingFile();
-      ctx.success(status);
+      const can_generate = demoState.can_generate_sourcing_file();
+      const progress = demoState.get_completion_progress();
+      const conditions = demoState.get_sourcing_file_conditions();
+      ctx.success({ can_generate, progress, conditions });
     } catch (error) {
       ctx.error(error.message, 500);
     }
@@ -722,10 +858,16 @@ export default function createRoutes(context) {
    */
   router.post('/sourcing-file/generate', async (ctx) => {
     try {
-      const { can_generate, reason } = canGenerateSourcingFile();
-      if (!can_generate) {
-        ctx.error(reason, 400);
+      if (!demoState.can_generate_sourcing_file()) {
+        ctx.error('条件不满足：需要所有 PN 完成供应商回传', 400);
         return;
+      }
+
+      // 收集所有PN的确认supplierIDs用于sourcing file
+      const allConfirmedIds = [];
+      for (const comp of demoState.snapshot.components) {
+        const ids = demoState.get_confirmed_supplier_ids(comp.component_no);
+        allConfirmedIds.push(...ids);
       }
 
       const preview = generateSourcingFilePreview();
@@ -770,18 +912,59 @@ export default function createRoutes(context) {
       demoState.set_components(assigned);
       demoState.transition(STATUS.BUYER_ASSIGNED);
 
-      // 找第一个有 mock 报价数据（>=2 家）的 component
+      // 加载 mock 报价数据
       const quotesPath = path.join(__dirname, '..', 'demo_data', 'mock-supplier-quotes.json');
       const quotesData = JSON.parse(fs.readFileSync(quotesPath, 'utf-8'));
 
+      // === 为所有 PN 初始化局部状态（audit-round04） ===
       let activeComponent = null;
-      let quotes = [];
+      let awardSummary = null;
+      let comparisonBase = null;
+      let globalQuotes = [];
+
       for (const comp of assigned) {
-        const compQuotes = quotesData[comp.component_no]?.quotes;
+        const cid = comp.component_no;
+        const compQuotes = quotesData[cid]?.quotes;
+
+        // quick-init 模式下所有 PN 均非首次录入，设为已保存锁定状态
+        demoState.set_first_entry(cid, false);
+        demoState.set_requirement_status(cid, PN_REQUIREMENT_STATUS.SAVED_LOCKED);
+
         if (compQuotes && compQuotes.length >= 2) {
-          activeComponent = comp;
-          quotes = compQuotes;
-          break;
+          // 有 mock 数据的 PN：自动推进到全流程
+          const supplierIds = compQuotes.map(q => q.supplier_id);
+
+          // 设置供应商选择为已确认
+          demoState.set_confirmed_supplier_ids(cid, supplierIds);
+          demoState.set_supplier_selection_status(cid, PN_SUPPLIER_SELECTION_STATUS.CONFIRMED);
+
+          // 设置 RFQ 状态为已发送
+          demoState.set_rfq_status(cid, PN_RFQ_STATUS.SENT);
+          demoState.increment_rfq_sent_count(cid);
+
+          // 加载报价，设置回传状态为全部回传
+          compQuotes.forEach(quote => {
+            demoState.set_supplier_quote(cid, quote.supplier_id, quote);
+            const normalized = normalizeQuote(quote);
+            demoState.set_normalized_quote(cid, quote.supplier_id, normalized);
+          });
+          demoState.set_quote_collection_status(cid, PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED);
+
+          // 记录 mock 发送日志
+          supplierIds.forEach(sid => {
+            demoState.add_mail_log(cid, sid, generateRfqSendLog(cid, sid));
+          });
+
+          // 取第一个作为 active （用于展示初始 benchmark）
+          if (!activeComponent) {
+            activeComponent = comp;
+            globalQuotes = compQuotes;
+          }
+        } else {
+          // 无 mock 数据的 PN：停留在初始状态
+          demoState.set_supplier_selection_status(cid, PN_SUPPLIER_SELECTION_STATUS.NOT_STARTED);
+          demoState.set_rfq_status(cid, PN_RFQ_STATUS.NOT_PREPARED);
+          demoState.set_quote_collection_status(cid, PN_QUOTE_COLLECTION_STATUS.NONE_REPLIED);
         }
       }
 
@@ -792,25 +975,14 @@ export default function createRoutes(context) {
 
       demoState.set_active_component(activeComponent.component_no);
 
-      // 加载报价
-      quotes.forEach(quote => {
-        demoState.set_supplier_quote(activeComponent.component_no, quote.supplier_id, quote);
-        const normalized = normalizeQuote(quote);
-        demoState.set_normalized_quote(activeComponent.component_no, quote.supplier_id, normalized);
-      });
-
-      demoState.safe_transition(STATUS.RFQ_PREPARED);
-      demoState.safe_transition(STATUS.RFQ_SENT);
-      demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
-
-      // 生成 Award Summary
-      const normalizedQuotes = quotes.map(q => normalizeQuote(q));
+      // 生成 Award Summary（第一个 PN）
+      const normalizedQuotes = globalQuotes.map(q => normalizeQuote(q));
       const supplierProfiles = {};
-      for (const q of quotes) {
+      for (const q of globalQuotes) {
         supplierProfiles[q.supplier_id] = getSupplierById(q.supplier_id) || {};
       }
 
-      const awardSummary = generateAwardSummary({
+      awardSummary = generateAwardSummary({
         component: activeComponent,
         normalizedQuotes,
         supplierProfiles,
@@ -818,25 +990,26 @@ export default function createRoutes(context) {
 
       demoState.set_award_comparison_rows(awardSummary.comparison_rows);
       demoState.set_award_summary(awardSummary);
+
+      // 全局状态顺序推进（与 PN 级状态保持一致）
+      demoState.safe_transition(STATUS.RFQ_PREPARED);
+      demoState.safe_transition(STATUS.RFQ_SENT);
+      demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
       demoState.safe_transition(STATUS.BENCHMARK_READY);
 
       // 同步生成比较底表
-      const comparisonBase = generateComparisonBase(activeComponent, normalizedQuotes, supplierProfiles);
+      comparisonBase = generateComparisonBase(activeComponent, normalizedQuotes, supplierProfiles);
       demoState.set_comparison_base(comparisonBase);
 
-      // 同步生成报价审核
-      const quoteReview = generateQuoteReview(activeComponent.component_no, quotes, normalizedQuotes);
-
+      // 返回数据
       ctx.success({
         project,
         components: assigned,
         component_count: assigned.length,
         active_component: activeComponent,
-        quotes,
-        quote_count: quotes.length,
+        progress: demoState.get_completion_progress(),
         award_summary: awardSummary,
         comparison_base: comparisonBase,
-        quote_review: quoteReview,
       });
     } catch (error) {
       ctx.error(error.message, 500);
