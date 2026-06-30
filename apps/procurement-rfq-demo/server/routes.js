@@ -17,6 +17,8 @@ import { normalizeQuote, normalizeQuotes } from '../domain/quotation/normalizer.
 import { generateAwardSummary, SCORING_WEIGHTS } from '../domain/award/comparison.js';
 import { generateComparisonBase } from '../domain/award/comparison-base.js';
 import { generateQuoteReview } from '../domain/quotation/quote-review.js';
+import { generateRfqSendLog, mockSupplierReply, mockBatchReplies } from '../domain/email/mock-email.js';
+import { canGenerateSourcingFile, generateSourcingFilePreview } from '../domain/sourcing/sourcing-file.js';
 import demoState from '../state/demo-state.js';
 import { STATUS, STATUS_ORDER } from '../state/state-constants.js';
 
@@ -148,11 +150,7 @@ export default function createRoutes(context) {
       }
       const assigned = assignBuyers(components);
       demoState.set_components(assigned);
-      const currentIdx = STATUS_ORDER.indexOf(demoState.status);
-      const targetIdx = STATUS_ORDER.indexOf(STATUS.COMPONENTS_ASSIGNED);
-      if (currentIdx < targetIdx) {
-        demoState.transition(STATUS.COMPONENTS_ASSIGNED);
-      }
+      demoState.safe_transition(STATUS.BUYER_ASSIGNED);
 
       const report = generateAssignmentReport(assigned);
       ctx.success({
@@ -358,12 +356,7 @@ export default function createRoutes(context) {
       const emailPreview = generateRFQEmailPreview(preview);
 
       demoState.set_rfq_preview(component_id, preview);
-      // 仅当当前状态尚未到达 RFQ_PREPARED 时才跳转（避免重复生成时状态倒退报错）
-      const currentIdx = STATUS_ORDER.indexOf(demoState.status);
-      const targetIdx = STATUS_ORDER.indexOf(STATUS.RFQ_PREPARED);
-      if (currentIdx < targetIdx) {
-        demoState.transition(STATUS.RFQ_PREPARED);
-      }
+      demoState.safe_transition(STATUS.RFQ_PREPARED);
 
       ctx.success({
         preview,
@@ -427,10 +420,8 @@ export default function createRoutes(context) {
         demoState.set_normalized_quote(component_id, quote.supplier_id, normalized);
       });
 
-      // 更新状态
-      if (demoState.status === STATUS.RFQ_PREPARED) {
-        demoState.transition(STATUS.QUOTES_COMPARED);
-      }
+      // 更新状态：收到报价后进入 feedback in progress
+      demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
 
       ctx.success({
         component_id,
@@ -559,11 +550,7 @@ export default function createRoutes(context) {
 
       demoState.set_award_comparison_rows(awardSummary.comparison_rows);
       demoState.set_award_summary(awardSummary);
-      const awardCurrentIdx = STATUS_ORDER.indexOf(demoState.status);
-      const awardTargetIdx = STATUS_ORDER.indexOf(STATUS.AWARD_REVIEWED);
-      if (awardCurrentIdx < awardTargetIdx) {
-        demoState.transition(STATUS.AWARD_REVIEWED);
-      }
+      demoState.safe_transition(STATUS.BENCHMARK_READY);
 
       ctx.success(awardSummary);
     } catch (error) {
@@ -606,7 +593,158 @@ export default function createRoutes(context) {
       extended_fields: EXTENDED_FIELDS,
     });
   });
+  // ==================== Mock 邮件路由 ====================
 
+  /**
+   * POST /rfq/send
+   * 模拟发送 RFQ 邮件
+   * Body: { component_id: string, supplier_ids: string[] }
+   */
+  router.post('/rfq/send', async (ctx) => {
+    try {
+      const { component_id, supplier_ids } = ctx.request.body;
+      if (!component_id || !Array.isArray(supplier_ids) || supplier_ids.length === 0) {
+        ctx.error('请提供 component_id 和 supplier_ids', 400);
+        return;
+      }
+
+      // 记录每家的发送日志
+      const sendLogs = [];
+      for (const sid of supplier_ids) {
+        const logEntry = generateRfqSendLog(component_id, sid);
+        demoState.add_mail_log(component_id, sid, logEntry);
+        sendLogs.push(logEntry);
+      }
+
+      demoState.safe_transition(STATUS.RFQ_SENT);
+
+      ctx.success({
+        component_id,
+        send_logs: sendLogs,
+        supplier_count: supplier_ids.length,
+        message: `RFQ 邮件已发送至 ${supplier_ids.length} 家供应商（演示模式）`,
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  /**
+   * POST /supplier/mock-reply
+   * 模拟供应商回邮
+   * Body: { component_id: string, supplier_ids?: string[] }
+   * 如果不传 supplier_ids，则自动对当前 component 的所有 selected suppliers 触发
+   */
+  router.post('/supplier/mock-reply', async (ctx) => {
+    try {
+      const { component_id, supplier_ids } = ctx.request.body;
+      if (!component_id) {
+        ctx.error('请提供 component_id', 400);
+        return;
+      }
+
+      // 确定要 mock 回邮的供应商列表
+      const state = demoState.snapshot;
+      let targetSupplierIds = supplier_ids;
+      if (!targetSupplierIds || targetSupplierIds.length === 0) {
+        // 自动从 supplier_candidates 和已有报价中推断
+        const candidates = state.supplier_candidates[component_id] || [];
+        const quoteSids = Object.keys(state.supplier_quotes[component_id] || {});
+        targetSupplierIds = [...new Set([...candidates.map(c => c.id || c.supplier_id), ...quoteSids])];
+      }
+
+      if (targetSupplierIds.length === 0) {
+        ctx.error('未找到可触发回邮的供应商', 400);
+        return;
+      }
+
+      const result = mockBatchReplies(component_id, targetSupplierIds);
+
+      // 记录邮件日志 + 加载解析成功的报价
+      let loadedCount = 0;
+      for (const r of result.results) {
+        demoState.add_mail_log(component_id, r.mail_log.supplier_id, r.mail_log);
+        if (r.quote) {
+          demoState.set_supplier_quote(component_id, r.quote.supplier_id, r.quote);
+          const normalized = normalizeQuote(r.quote);
+          demoState.set_normalized_quote(component_id, r.quote.supplier_id, normalized);
+          loadedCount++;
+        }
+      }
+
+      if (result.summary.success > 0) {
+        demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
+      }
+
+      ctx.success({
+        component_id,
+        summary: result.summary,
+        mail_logs: result.results.map(r => r.mail_log),
+        quotes_loaded: loadedCount,
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  /**
+   * GET /mail-logs/:component_id
+   * 获取邮件日志
+   */
+  router.get('/mail-logs/:component_id', async (ctx) => {
+    try {
+      const { component_id } = ctx.params;
+      const logs = demoState.get_mail_logs(component_id);
+      ctx.success({ component_id, logs });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  // ==================== Sourcing File 路由 ====================
+
+  /**
+   * GET /sourcing-file/status
+   * 检查 sourcing file 生成条件
+   */
+  router.get('/sourcing-file/status', async (ctx) => {
+    try {
+      const status = canGenerateSourcingFile();
+      ctx.success(status);
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  /**
+   * POST /sourcing-file/generate
+   * 生成 Sourcing File 预览
+   */
+  router.post('/sourcing-file/generate', async (ctx) => {
+    try {
+      const { can_generate, reason } = canGenerateSourcingFile();
+      if (!can_generate) {
+        ctx.error(reason, 400);
+        return;
+      }
+
+      const preview = generateSourcingFilePreview();
+      if (!preview) {
+        ctx.error('生成 sourcing file 预览失败', 500);
+        return;
+      }
+
+      demoState.set_sourcing_file_preview(preview);
+      demoState.safe_transition(STATUS.SOURCING_FILE_GENERATED);
+
+      ctx.success({
+        preview,
+        message: 'Sourcing File 预览已生成（演示模式，未实际导出文件）',
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
   // ==================== 快速初始化路由 ====================
 
   /**
@@ -630,7 +768,7 @@ export default function createRoutes(context) {
       // 分派 Buyer
       const assigned = assignBuyers(components);
       demoState.set_components(assigned);
-      demoState.transition(STATUS.COMPONENTS_ASSIGNED);
+      demoState.transition(STATUS.BUYER_ASSIGNED);
 
       // 找第一个有 mock 报价数据（>=2 家）的 component
       const quotesPath = path.join(__dirname, '..', 'demo_data', 'mock-supplier-quotes.json');
@@ -661,8 +799,9 @@ export default function createRoutes(context) {
         demoState.set_normalized_quote(activeComponent.component_no, quote.supplier_id, normalized);
       });
 
-      demoState.transition(STATUS.RFQ_PREPARED);
-      demoState.transition(STATUS.QUOTES_COMPARED);
+      demoState.safe_transition(STATUS.RFQ_PREPARED);
+      demoState.safe_transition(STATUS.RFQ_SENT);
+      demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
 
       // 生成 Award Summary
       const normalizedQuotes = quotes.map(q => normalizeQuote(q));
@@ -679,7 +818,7 @@ export default function createRoutes(context) {
 
       demoState.set_award_comparison_rows(awardSummary.comparison_rows);
       demoState.set_award_summary(awardSummary);
-      demoState.transition(STATUS.AWARD_REVIEWED);
+      demoState.safe_transition(STATUS.BENCHMARK_READY);
 
       // 同步生成比较底表
       const comparisonBase = generateComparisonBase(activeComponent, normalizedQuotes, supplierProfiles);

@@ -62,7 +62,7 @@ async function quickInitDemo() {
 
   demoState.set_project(project);
   demoState.set_components(components);
-  demoState.transition(STATUS.COMPONENTS_ASSIGNED);
+  demoState.transition(STATUS.BUYER_ASSIGNED);
 
   // Step 2: 分派 Buyer
   const assignedComponents = assignBuyers(components);
@@ -97,7 +97,7 @@ async function quickInitDemo() {
   });
 
   demoState.transition(STATUS.RFQ_PREPARED);
-  demoState.transition(STATUS.QUOTES_COMPARED);
+  demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
 
   return {
     success: true,
@@ -130,7 +130,7 @@ function quickInitDemoSync() {
   // Step 2: 分派 Buyer
   const assignedComponents = assignBuyers(components);
   demoState.set_components(assignedComponents);
-  demoState.transition(STATUS.COMPONENTS_ASSIGNED);
+  demoState.transition(STATUS.BUYER_ASSIGNED);
 
   // Step 3: 选择第一个有 mock 数据的 component
   const quotesPath = path.join(__dirname, 'mock-supplier-quotes.json');
@@ -161,7 +161,7 @@ function quickInitDemoSync() {
   });
 
   demoState.transition(STATUS.RFQ_PREPARED);
-  demoState.transition(STATUS.QUOTES_COMPARED);
+  demoState.safe_transition(STATUS.SUPPLIER_FEEDBACK_IN_PROGRESS);
 
   return {
     success: true,
