@@ -602,13 +602,13 @@ async function handleSelectPn(componentNo: string) {
     // 恢复约束表单
     try { const data = await apiGet(`/constraint-form/${componentNo}`); if (data) Object.assign(constraintForm, data) } catch (e) { /* ignore */ }
 
-    // 恢复 supplier 展示态：如果已确认，重新拉推荐列表并标记
+    // audit-round07: confirmed 状态走纯读取接口，不调 recommend（避免刷新推荐列表）
     recommendations.value = []
     selectedSuppliers.value = []
     if (selStatus === 'confirmed') {
       try {
-        const recData = await apiGet(`/supplier/recommend/${componentNo}`)
-        recommendations.value = recData.recommendations || []
+        const displayData = await apiGet(`/supplier/confirmed-display/${componentNo}`)
+        recommendations.value = displayData.suppliers || []
       } catch (e) { /* ignore */ }
     }
 
@@ -790,7 +790,16 @@ async function handleMockReplyAll() {
     )
     const data = await apiPost('/demo/mock-reply-all')
     await refreshState()
-    ElMessage.success(data.message || `已将 ${data.total_pns_updated} 个 PN 更新为全部回传`)
+
+    // audit-round07: 展示完整诊断信息（更新 + 跳过）
+    let msg = data.message || `已将 ${data.total_pns_updated} 个 PN 更新为全部回传`
+    if (data.skipped_pns && data.skipped_pns.length > 0) {
+      const skipList = data.skipped_pns.map((s: any) => `  · ${s.component_id}: ${s.reason}`).join('\n')
+      msg += '\n\n⚠ 跳过的 PN:\n' + skipList
+      ElMessage.warning({ message: msg, duration: 8000, dangerouslyUseHTMLString: false })
+    } else {
+      ElMessage.success(msg)
+    }
   } catch (e: any) {
     if (e !== 'cancel') ElMessage.error('批量回传失败: ' + (e?.response?.data?.message || e?.message || ''))
   }

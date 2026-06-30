@@ -396,18 +396,46 @@ export default function createRoutes(context) {
       const constraintForm = demoState.get_constraint_form(component_id);
       const recommendations = recommendSuppliers(comp, constraintForm);
 
-      // audit-round05: 推荐后自动进入选择态
+      // audit-round07: 推荐接口改为纯读取，不再附带状态副作用
+      // 仅在尚未启动选择时，自动进入 selecting（首次推荐）
       const currentSelStatus = demoState.get_supplier_selection_status(component_id);
-      if (currentSelStatus === PN_SUPPLIER_SELECTION_STATUS.NOT_STARTED
-        || currentSelStatus === PN_SUPPLIER_SELECTION_STATUS.CONFIRMED) {
+      if (currentSelStatus === PN_SUPPLIER_SELECTION_STATUS.NOT_STARTED) {
         demoState.set_supplier_selection_status(component_id, PN_SUPPLIER_SELECTION_STATUS.SELECTING);
       }
+      // 已 confirmed 的 PN 不再被推荐接口降级为 selecting
 
       ctx.success({
         component_id,
         recommendations,
         total_candidates: recommendations.length,
       });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
+  /**
+   * GET /supplier/confirmed-display/:component_id
+   * audit-round07: 纯读取已确认供应商的展示数据（无任何副作用）
+   * 用于前端切换 PN 时恢复展示态，不走 recommend 路径
+   */
+  router.get('/supplier/confirmed-display/:component_id', async (ctx) => {
+    try {
+      const { component_id } = ctx.params;
+      const confirmedIds = demoState.get_confirmed_supplier_ids(component_id);
+      if (!confirmedIds || confirmedIds.length === 0) {
+        ctx.success({ component_id, suppliers: [] });
+        return;
+      }
+      const suppliers = confirmedIds
+        .map(id => getSupplierById(id))
+        .filter(Boolean)
+        .map(s => ({
+          supplier: s,
+          score: 0,      // 已确认列表不展示评分
+          reasons: ['已确认供应商（展示态）'],
+        }));
+      ctx.success({ component_id, suppliers });
     } catch (error) {
       ctx.error(error.message, 500);
     }
@@ -875,7 +903,7 @@ export default function createRoutes(context) {
       const preview = generateSourcingFilePreview();
 
       demoState.set_sourcing_file_preview(preview);
-      demoState.safe_transition(STATUS.SOURCING_FILE_GENERATED);
+      // audit-round07: 不再走旧全局状态跳转，PN 聚合条件已足够
 
       ctx.success({
         preview,
@@ -896,23 +924,37 @@ export default function createRoutes(context) {
     try {
       const allPnIds = demoState.snapshot.components.map(c => c.component_no);
       let totalReplied = 0;
-      const results = [];
+      const updatedPns = [];
+      const skippedPns = [];
 
       for (const cid of allPnIds) {
-        // 条件：supplier 已确认 + RFQ 已发送 + 尚未全部回传
         const confirmedIds = demoState.get_confirmed_supplier_ids(cid);
-        if (confirmedIds.length === 0) continue;
         const rfqStatus = demoState.get_rfq_status(cid);
-        if (rfqStatus !== PN_RFQ_STATUS.SENT) continue;
         const collStatus = demoState.get_quote_collection_status(cid);
-        if (collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) continue;
+
+        // 逐项诊断跳过原因
+        if (confirmedIds.length === 0) {
+          skippedPns.push({ component_id: cid, reason: '未确认供应商' });
+          continue;
+        }
+        if (rfqStatus !== PN_RFQ_STATUS.SENT) {
+          skippedPns.push({ component_id: cid, reason: `RFQ 未发送 (当前: ${rfqStatus})` });
+          continue;
+        }
+        if (collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) {
+          skippedPns.push({ component_id: cid, reason: '已全部回传' });
+          continue;
+        }
 
         // 收集尚未回传的 supplier
         const existingQuotes = demoState.snapshot.supplier_quotes[cid] || {};
         const missingSids = confirmedIds.filter(sid => !existingQuotes[sid]);
         const targetSids = missingSids.length > 0 ? [...Object.keys(existingQuotes), ...missingSids] : Object.keys(existingQuotes);
 
-        if (targetSids.length === 0) continue;
+        if (targetSids.length === 0) {
+          skippedPns.push({ component_id: cid, reason: '无可用 supplier 数据' });
+          continue;
+        }
 
         const batchResult = mockBatchReplies(cid, targetSids);
         let pnLoaded = 0;
@@ -931,17 +973,29 @@ export default function createRoutes(context) {
           totalReplied++;
         }
 
-        results.push({
+        updatedPns.push({
           component_id: cid,
           suppliers_replied: pnLoaded,
           total_confirmed: confirmedIds.length,
         });
       }
 
+      const summaryParts = [`已更新 ${totalReplied} 个 PN`];
+      if (skippedPns.length > 0) {
+        const byReason = new Map();
+        for (const s of skippedPns) {
+          byReason.set(s.reason, (byReason.get(s.reason) || 0) + 1);
+        }
+        const reasonSummary = [...byReason.entries()]
+          .map(([r, c]) => `${c} 个${r}`).join('，');
+        summaryParts.push(`跳过 ${skippedPns.length} 个 PN（${reasonSummary}）`);
+      }
+
       ctx.success({
         total_pns_updated: totalReplied,
-        details: results,
-        message: `已将 ${totalReplied} 个 PN 的报价回传状态更新为全部回传（Demo 模式）`,
+        updated_pns: updatedPns,
+        skipped_pns: skippedPns,
+        message: summaryParts.join('，') + '（Demo 模式）',
       });
     } catch (error) {
       ctx.error(error.message, 500);
