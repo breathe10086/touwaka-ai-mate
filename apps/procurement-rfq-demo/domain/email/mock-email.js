@@ -78,12 +78,11 @@ const MOCK_REPLIES = {
     parse_success: true,
   },
   supplier_delta: {
-    subject: 'Re: RFQ - 报价需求确认',
-    body: '我们对该项目很感兴趣，但需要更多技术细节才能提供精准报价。请提供 3D 图档。',
-    has_attachment: false,
-    attachment_name: null,
-    parse_success: false,
-    failure_reason: '供应商要求补充技术资料，需人工介入',
+    subject: 'Re: RFQ - Delta报价回复',
+    body: '附件为正式报价单，标准交期4周。量大可议。',
+    has_attachment: true,
+    attachment_name: 'Delta_Quote_2026Q3.xlsx',
+    parse_success: true,
   },
   supplier_epsilon: {
     subject: 'Re: RFQ - Quote Submission',
