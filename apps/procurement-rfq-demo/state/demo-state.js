@@ -270,10 +270,15 @@ class DemoState {
   }
 
   /**
-   * 是否可以模拟回传（per PN + role: admin only）
+   * 是否可以模拟回传（per PN + role）
+   * audit-round06: admin 可对任意 PN 执行，assigned buyer 可对自己负责的 PN 执行
    */
   can_mock_reply(component_id, role) {
-    if (role !== 'admin') return false;
+    if (role !== 'admin') {
+      // 非 admin 必须是该 PN 的 assigned buyer
+      const comp = this._state.components.find(c => c.component_no === component_id);
+      if (!comp || comp.buyer_id !== role) return false;
+    }
     const rfqStatus = this.get_rfq_status(component_id);
     if (rfqStatus !== PN_RFQ_STATUS.SENT) return false;
     const collStatus = this.get_quote_collection_status(component_id);

@@ -18,7 +18,7 @@ import { generateAwardSummary, SCORING_WEIGHTS } from '../domain/award/compariso
 import { generateComparisonBase } from '../domain/award/comparison-base.js';
 import { generateQuoteReview } from '../domain/quotation/quote-review.js';
 import { generateRfqSendLog, mockSupplierReply, mockBatchReplies } from '../domain/email/mock-email.js';
-import { canGenerateSourcingFile, generateSourcingFilePreview } from '../domain/sourcing/sourcing-file.js';
+import { generateSourcingFilePreview } from '../domain/sourcing/sourcing-file.js';
 import demoState from '../state/demo-state.js';
 import { STATUS, STATUS_ORDER, PN_REQUIREMENT_STATUS, PN_SUPPLIER_SELECTION_STATUS, PN_RFQ_STATUS, PN_QUOTE_COLLECTION_STATUS } from '../state/state-constants.js';
 
@@ -482,6 +482,8 @@ export default function createRoutes(context) {
 
       const emailPreview = generateRFQEmailPreview(preview);
 
+      // audit-round06: 持久存 email_preview 到 preview 对象中，供后续查看已发送RFQ复用
+      preview.email_preview = emailPreview;
       demoState.set_rfq_preview(component_id, preview);
       // PN 级 RFQ 状态设为 prepared（audit-round04）
       demoState.set_rfq_status(component_id, PN_RFQ_STATUS.PREPARED);
@@ -871,10 +873,6 @@ export default function createRoutes(context) {
       }
 
       const preview = generateSourcingFilePreview();
-      if (!preview) {
-        ctx.error('生成 sourcing file 预览失败', 500);
-        return;
-      }
 
       demoState.set_sourcing_file_preview(preview);
       demoState.safe_transition(STATUS.SOURCING_FILE_GENERATED);
@@ -887,6 +885,69 @@ export default function createRoutes(context) {
       ctx.error(error.message, 500);
     }
   });
+  // ==================== Demo 辅助路由 ====================
+
+  /**
+   * POST /demo/mock-reply-all
+   * audit-round06: 一键全部回传（Demo 专用）
+   * 遍历所有满足条件的 PN，批量补齐 mock reply
+   */
+  router.post('/demo/mock-reply-all', async (ctx) => {
+    try {
+      const allPnIds = demoState.snapshot.components.map(c => c.component_no);
+      let totalReplied = 0;
+      const results = [];
+
+      for (const cid of allPnIds) {
+        // 条件：supplier 已确认 + RFQ 已发送 + 尚未全部回传
+        const confirmedIds = demoState.get_confirmed_supplier_ids(cid);
+        if (confirmedIds.length === 0) continue;
+        const rfqStatus = demoState.get_rfq_status(cid);
+        if (rfqStatus !== PN_RFQ_STATUS.SENT) continue;
+        const collStatus = demoState.get_quote_collection_status(cid);
+        if (collStatus === PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) continue;
+
+        // 收集尚未回传的 supplier
+        const existingQuotes = demoState.snapshot.supplier_quotes[cid] || {};
+        const missingSids = confirmedIds.filter(sid => !existingQuotes[sid]);
+        const targetSids = missingSids.length > 0 ? [...Object.keys(existingQuotes), ...missingSids] : Object.keys(existingQuotes);
+
+        if (targetSids.length === 0) continue;
+
+        const batchResult = mockBatchReplies(cid, targetSids);
+        let pnLoaded = 0;
+        for (const r of batchResult.results) {
+          demoState.add_mail_log(cid, r.mail_log.supplier_id, r.mail_log);
+          if (r.quote) {
+            demoState.set_supplier_quote(cid, r.quote.supplier_id, r.quote);
+            const normalized = normalizeQuote(r.quote);
+            demoState.set_normalized_quote(cid, r.quote.supplier_id, normalized);
+            pnLoaded++;
+          }
+        }
+
+        if (pnLoaded > 0) {
+          demoState.set_quote_collection_status(cid, PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED);
+          totalReplied++;
+        }
+
+        results.push({
+          component_id: cid,
+          suppliers_replied: pnLoaded,
+          total_confirmed: confirmedIds.length,
+        });
+      }
+
+      ctx.success({
+        total_pns_updated: totalReplied,
+        details: results,
+        message: `已将 ${totalReplied} 个 PN 的报价回传状态更新为全部回传（Demo 模式）`,
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
   // ==================== 快速初始化路由 ====================
 
   /**

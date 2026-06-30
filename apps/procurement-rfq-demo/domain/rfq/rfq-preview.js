@@ -94,11 +94,8 @@ function generateRFQEmailPreview(preview) {
   if (cs.delivery_requirement) text += `  - 交付要求: ${cs.delivery_requirement}\n`;
   if (cs.special_note) text += `  - 备注: ${cs.special_note}\n`;
   text += '\n';
-
-  text += `候选供应商 (${preview.suppliers.length} 家):\n`;
-  preview.suppliers.forEach((s, i) => {
-    text += `  ${i + 1}. ${s.supplier_name} (${s.certification}, ${s.city}, ${s.country})\n`;
-  });
+  text += '附：Cost Breakdown Form、图纸/规格书等附件请查收。\n';
+  text += '\n此致\n采购部';
 
   return text;
 }

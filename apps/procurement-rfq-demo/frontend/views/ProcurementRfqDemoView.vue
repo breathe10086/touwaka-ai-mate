@@ -275,6 +275,7 @@
                 </div>
                 <div v-else-if="!canGenerateSourcing && state.components.length > 0">
                   <el-alert title="条件不满足：部分 PN 未完成全部 4 项条件" type="warning" :closable="false" show-icon style="margin-bottom:12px"></el-alert>
+                  <el-button type="warning" size="small" @click="handleMockReplyAll" :loading="loading" style="margin-bottom:12px">⚡ 所有零件全部回传（Demo）</el-button>
                 </div>
                 <div v-if="sourcingPreview">
                   <h4>Sourcing File 预览</h4>
@@ -325,7 +326,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import apiClient from '@/api/client'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const BASE = '/apps/procurement-rfq-demo'
 async function apiGet(path: string) { const res = await apiClient.get(BASE + path); return (res.data as any).data }
@@ -465,9 +466,15 @@ const canSendRfq = computed(() => {
   }
   return currentPnRfqStatus.value === 'prepared' || currentPnRfqStatus.value === 'sent'
 })
+// audit-round06: mock reply 权限下放给 assigned buyer
 const canMockReply = computed(() => {
   const cid = state.active_component_id; if (!cid) return false
-  return mockRole.value === 'admin' && currentPnRfqStatus.value === 'sent' && currentPnQuoteStatus.value !== 'all_replied'
+  if (currentPnRfqStatus.value !== 'sent') return false
+  if (currentPnQuoteStatus.value === 'all_replied') return false
+  if (mockRole.value === 'admin') return true
+  // assigned buyer 可对自己负责的 PN 执行模拟回传
+  const comp = state.components.find((c: any) => c.component_no === cid)
+  return !!(comp && comp.buyer_id === mockRole.value)
 })
 const canGenerateBenchmark = computed(() => {
   const cid = state.active_component_id; if (!cid) return false
@@ -583,8 +590,42 @@ async function handleAssignBuyers() {
 
 // === PN 钻取 ===
 async function handleSelectPn(componentNo: string) {
-  try { await apiPut(`/component/${componentNo}/select`); await refreshState(); activePn.value = state.components.find((c: any) => c.component_no === componentNo); recommendations.value = []; selectedSuppliers.value = []; try { const data = await apiGet(`/constraint-form/${componentNo}`); if (data) Object.assign(constraintForm, data) } catch (e) { /* ignore */ } }
-  catch (e) { console.error(e) }
+  try {
+    await apiPut(`/component/${componentNo}/select`)
+    await refreshState()
+    activePn.value = state.components.find((c: any) => c.component_no === componentNo)
+
+    // audit-round06: 按已保存状态恢复展示态，不再盲目清空
+    const selStatus = state.supplier_selection_status[componentNo] || 'not_started'
+    const rfqStatusVal = state.rfq_status[componentNo] || 'not_prepared'
+
+    // 恢复约束表单
+    try { const data = await apiGet(`/constraint-form/${componentNo}`); if (data) Object.assign(constraintForm, data) } catch (e) { /* ignore */ }
+
+    // 恢复 supplier 展示态：如果已确认，重新拉推荐列表并标记
+    recommendations.value = []
+    selectedSuppliers.value = []
+    if (selStatus === 'confirmed') {
+      try {
+        const recData = await apiGet(`/supplier/recommend/${componentNo}`)
+        recommendations.value = recData.recommendations || []
+      } catch (e) { /* ignore */ }
+    }
+
+    // 恢复 RFQ preview
+    if (rfqStatusVal === 'prepared' || rfqStatusVal === 'sent') {
+      const preview = state.rfq_previews[componentNo]
+      if (preview) {
+        rfqPreview.value = preview
+        rfqEmailPreview.value = preview.email_preview || ''
+      }
+    }
+
+    // 恢复 benchmark / award（如果有）
+    comparisonBase.value = null
+    awardSummary.value = null
+    // 从后端 state 中如果已有则恢复（通过 refreshState 已同步）
+  } catch (e) { console.error(e) }
 }
 
 // === 约束 & 供应商 ===
@@ -678,18 +719,14 @@ async function handleSendRFQ() {
   } catch (e: any) { ElMessage.error('发送失败: ' + (e?.response?.data?.message || e?.message || '')) }
 }
 
-// audit-round05: 查看已发送的RFQ（不重新发送）
+// audit-round06: 查看已发送的RFQ（使用保存的 email_preview）
 async function handleViewSentRfq() {
   const cid = state.active_component_id; if (!cid) return
-  // 复用已保存的 rfq_preview
   const preview = state.rfq_previews[cid]
   if (preview) {
     rfqPreview.value = preview
-    // 重新生成 email preview
-    const sids = state.confirmed_supplier_ids[cid] || []
-    const supplierInfoMap: Record<string, any> = {}
-    for (const sid of sids) { supplierInfoMap[sid] = { id: sid, name: sid } }
-    rfqEmailPreview.value = preview.email_body || ''
+    // audit-round06: 直接使用 preview 中已持久化的 email_preview
+    rfqEmailPreview.value = preview.email_preview || ''
     rfqModalVisible.value = true
     rfqModalTab.value = 'mail_body'
   } else {
@@ -739,6 +776,24 @@ async function handleMockReply() {
     await refreshState()
     ElMessage.success(`模拟回传完成（${allSids.length}家）`)
   } catch (e: any) { ElMessage.error('回传失败: ' + (e?.response?.data?.message || e?.message || '')) }
+  finally { loading.value = false }
+}
+
+// audit-round06: 一键全部回传（Demo 专用）
+async function handleMockReplyAll() {
+  loading.value = true
+  try {
+    await ElMessageBox.confirm(
+      '该操作会将所有已发送 RFQ 的零件直接标记为全部回传，仅用于演示。是否继续？',
+      '确认批量回传',
+      { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
+    )
+    const data = await apiPost('/demo/mock-reply-all')
+    await refreshState()
+    ElMessage.success(data.message || `已将 ${data.total_pns_updated} 个 PN 更新为全部回传`)
+  } catch (e: any) {
+    if (e !== 'cancel') ElMessage.error('批量回传失败: ' + (e?.response?.data?.message || e?.message || ''))
+  }
   finally { loading.value = false }
 }
 
