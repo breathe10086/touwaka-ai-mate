@@ -797,9 +797,9 @@ async function handleFastForwardAll() {
       msg += '\n\n📋 详细动作:\n' + detailList
     }
     if (data.auto_confirmed_supplier > 0) {
-      ElMessage.success({ message: msg, duration: 10000, dangerouslyUseHTMLString: false })
+      ElMessage.success({ message: msg, duration: 2500, dangerouslyUseHTMLString: false })
     } else {
-      ElMessage.info({ message: msg, duration: 8000, dangerouslyUseHTMLString: false })
+      ElMessage.info({ message: msg, duration: 2500, dangerouslyUseHTMLString: false })
     }
   } catch (e: any) {
     if (e !== 'cancel') ElMessage.error('补齐失败: ' + (e?.response?.data?.message || e?.message || ''))
