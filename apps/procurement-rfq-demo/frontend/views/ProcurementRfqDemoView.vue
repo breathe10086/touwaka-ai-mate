@@ -70,8 +70,8 @@
                     <el-table-column prop="category" label="品类" width="120"><template #default="{ row }"><el-tag size="small" type="info">{{ row.category }}</el-tag></template></el-table-column>
                     <el-table-column label="当前 Buyer" width="120"><template #default="{ row }"><span v-if="row.buyer_id">{{ getBuyerName(row.buyer_id) }}</span><el-tag v-else type="danger" size="small">未分派</el-tag></template></el-table-column>
                     <el-table-column label="供应商" width="100"><template #default="{ row }"><el-tag :type="getSupplierSelectLabel(row.component_no).type" size="small">{{ getSupplierSelectLabel(row.component_no).text }}</el-tag></template></el-table-column>
-                    <!-- audit-round05: 管理员重分派 Buyer 始终可见 -->
-                    <el-table-column label="重分派" width="130" v-if="mockRole==='admin'"><template #default="{ row }"><el-select v-model="reassignMap[row.component_no]" size="small" placeholder="更换" style="width:90px" @change="(v: string) => handleReassignBuyer(row.component_no, v)"><el-option v-for="b in allBuyerIds" :key="b" :label="getBuyerName(b)" :value="b"></el-option></el-select></template></el-table-column>
+                    <!-- audit-round08: 管理员人工分派 Buyer 始终可见 -->
+                    <el-table-column label="人工分派" width="130" v-if="mockRole==='admin'"><template #default="{ row }"><el-select v-model="reassignMap[row.component_no]" size="small" placeholder="更换" style="width:90px" @change="(v: string) => handleReassignBuyer(row.component_no, v)"><el-option v-for="b in allBuyerIds" :key="b" :label="getBuyerName(b)" :value="b"></el-option></el-select></template></el-table-column>
                   </el-table>
                   <div class="sheet-actions">
                     <el-button type="primary" size="small" @click="handleAssignBuyers" :disabled="allBuyersAssigned" :loading="loading">自动分派 Buyer</el-button>
@@ -88,7 +88,7 @@
                 <div v-else>
                   <!-- PN List -->
                   <h4 class="sheet-section-title">PN 列表（含局部状态）</h4>
-                  <el-table :data="filteredComponents" stripe size="small" highlight-current-row @row-click="(row: any) => handleSelectPn(row.component_no)">
+                  <el-table :data="filteredComponents" stripe size="small" highlight-current-row row-key="component_no" :current-row-key="state.active_component_id" :row-class-name="pnRowClassName" @row-click="(row: any) => handleSelectPn(row.component_no)">
                     <el-table-column prop="component_no" label="PN 编号" width="150"><template #default="{ row }"><el-link type="primary" :underline="false">{{ row.component_no }}</el-link></template></el-table-column>
                     <el-table-column prop="component_name" label="名称" min-width="140"></el-table-column>
                     <el-table-column prop="category" label="品类" width="90"><template #default="{ row }"><el-tag size="small">{{ row.category }}</el-tag></template></el-table-column>
@@ -275,7 +275,7 @@
                 </div>
                 <div v-else-if="!canGenerateSourcing && state.components.length > 0">
                   <el-alert title="条件不满足：部分 PN 未完成全部 4 项条件" type="warning" :closable="false" show-icon style="margin-bottom:12px"></el-alert>
-                  <el-button type="warning" size="small" @click="handleMockReplyAll" :loading="loading" style="margin-bottom:12px">⚡ 所有零件全部回传（Demo）</el-button>
+                  <el-button type="warning" size="small" @click="handleFastForwardAll" :loading="loading" style="margin-bottom:12px">⚡ 补齐剩余零件到全部回传（Demo）</el-button>
                 </div>
                 <div v-if="sourcingPreview">
                   <h4>Sourcing File 预览</h4>
@@ -336,7 +336,7 @@ async function apiPut(path: string, body?: any) { const res = await apiClient.pu
 // === 全局状态 ===
 const loading = ref(false)
 const mockRole = ref<'admin'|'buyer_zhang'|'buyer_li'>('admin')
-const activeSheet = ref('supplier')
+const activeSheet = ref('buyer_assignment')  // audit-round08: 默认进 buyer 分派，符合首次使用心智
 const selectedEbom = ref(false)
 const activePn = ref<any>(null)
 const pnCollapseActive = ref<string[]>(['params'])
@@ -571,11 +571,11 @@ async function refreshState() {
 }
 
 // === EBOM 操作 ===
-async function handleSelectEbom() { selectedEbom.value = true; activeSheet.value = 'supplier' }
+async function handleSelectEbom() { selectedEbom.value = true; activeSheet.value = 'buyer_assignment' }  // audit-round08: 选 EBOM 后先到 buyer 分派
 
 async function handleLoadSampleEBOM() {
   loading.value = true
-  try { await apiPost('/ebom/load-sample'); await refreshState(); selectedEbom.value = true; ElMessage.success('示例 EBOM 已加载') }
+  try { await apiPost('/ebom/load-sample'); await refreshState(); selectedEbom.value = true; activeSheet.value = 'buyer_assignment'; ElMessage.success('示例 EBOM 已加载') }  // audit-round08: 加载后切到 buyer 分派
   catch (e: any) { ElMessage.error('加载失败: ' + (e?.response?.data?.message || e?.message || '')) }
   finally { loading.value = false }
 }
@@ -677,14 +677,14 @@ async function handleModifySuppliers() {
   } catch (e: any) { ElMessage.error('修改失败: ' + (e?.response?.data?.message || e?.message || '')) }
 }
 
-// audit-round04: 管理员重分派 Buyer
+// audit-round08: 管理员人工分派 Buyer
 async function handleReassignBuyer(componentNo: string, newBuyerId: string) {
   if (mockRole.value !== 'admin') return
   try {
     await apiPut('/buyer/reassign', { component_no: componentNo, buyer_id: newBuyerId })
     await refreshState()
     ElMessage.success(`PN ${componentNo} Buyer 已更新为 ${getBuyerName(newBuyerId)}`)
-  } catch (e: any) { ElMessage.error('重分派失败: ' + (e?.response?.data?.message || e?.message || '')) }
+  } catch (e: any) { ElMessage.error('人工分派失败: ' + (e?.response?.data?.message || e?.message || '')) }
 }
 
 // audit-round04: 供应商详情
@@ -779,31 +779,37 @@ async function handleMockReply() {
   finally { loading.value = false }
 }
 
-// audit-round06: 一键全部回传（Demo 专用）
-async function handleMockReplyAll() {
+// audit-round08: 演示加速器 — 自动补齐所有未完成 PN 到全部回传
+async function handleFastForwardAll() {
   loading.value = true
   try {
     await ElMessageBox.confirm(
-      '该操作会将所有已发送 RFQ 的零件直接标记为全部回传，仅用于演示。是否继续？',
-      '确认批量回传',
+      '该操作将自动补齐所有未完成 PN（推荐供应商→发RFQ→模拟回传），仅用于演示。是否继续？',
+      '确认一键补齐',
       { confirmButtonText: '继续', cancelButtonText: '取消', type: 'warning' }
     )
-    const data = await apiPost('/demo/mock-reply-all')
+    const data = await apiPost('/demo/fast-forward-all')
     await refreshState()
 
-    // audit-round07: 展示完整诊断信息（更新 + 跳过）
-    let msg = data.message || `已将 ${data.total_pns_updated} 个 PN 更新为全部回传`
-    if (data.skipped_pns && data.skipped_pns.length > 0) {
-      const skipList = data.skipped_pns.map((s: any) => `  · ${s.component_id}: ${s.reason}`).join('\n')
-      msg += '\n\n⚠ 跳过的 PN:\n' + skipList
-      ElMessage.warning({ message: msg, duration: 8000, dangerouslyUseHTMLString: false })
+    let msg = data.message || 'Demo 加速器完成'
+    if (data.details && data.details.length > 0) {
+      const detailList = data.details.map((d: any) => `  · ${d.component_id}: ${d.actions.join(' → ')}`).join('\n')
+      msg += '\n\n📋 详细动作:\n' + detailList
+    }
+    if (data.auto_confirmed_supplier > 0) {
+      ElMessage.success({ message: msg, duration: 10000, dangerouslyUseHTMLString: false })
     } else {
-      ElMessage.success(msg)
+      ElMessage.info({ message: msg, duration: 8000, dangerouslyUseHTMLString: false })
     }
   } catch (e: any) {
-    if (e !== 'cancel') ElMessage.error('批量回传失败: ' + (e?.response?.data?.message || e?.message || ''))
+    if (e !== 'cancel') ElMessage.error('补齐失败: ' + (e?.response?.data?.message || e?.message || ''))
   }
   finally { loading.value = false }
+}
+
+// audit-round08: PN 列表自定义行高亮（稳定绑定 active_component_id）
+function pnRowClassName({ row }: { row: any }) {
+  return row.component_no === state.active_component_id ? 'is-active-pn-row' : ''
 }
 
 // === Benchmark & Award ===
@@ -909,4 +915,8 @@ onMounted(() => { refreshState() })
 .tag-item { margin-right: 4px; margin-bottom: 3px; }
 .progress-bar-wrap { display: flex; align-items: center; gap: 8px; }
 .progress-text { font-size: 11px; color: #909399; white-space: nowrap; }
+
+/* audit-round08: PN 列表高亮当前选中行 */
+:deep(.is-active-pn-row) { background-color: #ecf5ff !important; }
+:deep(.is-active-pn-row td:first-child) { border-left: 3px solid #409EFF; }
 </style>

@@ -1002,6 +1002,140 @@ export default function createRoutes(context) {
     }
   });
 
+  // ==================== 演示加速器 ====================
+
+  /**
+   * POST /demo/fast-forward-all
+   * audit-round08: 演示加速器 — 自动补齐所有未完成 PN 到"全部回传"
+   * 对每个 PN 依次执行：
+   *   1. 未确认 supplier → 从推荐结果取前 2 家自动确认
+   *   2. 未生成 RFQ → 自动 prefill constraint + 生成 RFQ 预览
+   *   3. 未发送 RFQ → 自动发送
+   *   4. 未全部回传 → 自动 mock 回传
+   */
+  router.post('/demo/fast-forward-all', async (ctx) => {
+    try {
+      const allPnIds = demoState.snapshot.components.map(c => c.component_no);
+      let autoConfirmedCount = 0;
+      let autoSentCount = 0;
+      let autoRepliedCount = 0;
+      let skippedCount = 0;
+      const details = [];
+
+      for (const cid of allPnIds) {
+        const comp = demoState.snapshot.components.find(c => c.component_no === cid);
+        if (!comp) continue;
+
+        const pnActions = [];
+        const confirmedIds = demoState.get_confirmed_supplier_ids(cid);
+        const rfqStatus = demoState.get_rfq_status(cid);
+        const collStatus = demoState.get_quote_collection_status(cid);
+        const currentSelStatus = demoState.get_supplier_selection_status(cid);
+
+        // Step 1: 未确认 supplier → 自动推荐 + 取前 2 家确认
+        if (confirmedIds.length === 0 || currentSelStatus !== PN_SUPPLIER_SELECTION_STATUS.CONFIRMED) {
+          const constraintForm = demoState.get_constraint_form(cid);
+          const recommendations = recommendSuppliers(comp, constraintForm);
+          const top2 = recommendations.slice(0, 2).map(r => r.supplier.id);
+          if (top2.length >= 2) {
+            demoState.set_confirmed_supplier_ids(cid, top2);
+            demoState.set_supplier_selection_status(cid, PN_SUPPLIER_SELECTION_STATUS.CONFIRMED);
+            autoConfirmedCount++;
+            pnActions.push(`自动确认 ${top2.length} 家供应商`);
+          }
+        }
+
+        // 重新获取最新的 confirmedIds
+        const latestConfirmedIds = demoState.get_confirmed_supplier_ids(cid);
+        if (latestConfirmedIds.length === 0) {
+          skippedCount++;
+          details.push({ component_id: cid, actions: pnActions.length ? pnActions : ['无可推荐供应商-跳过'] });
+          continue;
+        }
+
+        // Step 2: 未生成/未发送 RFQ → 自动 prefill + 生成 + 发送
+        if (rfqStatus !== PN_RFQ_STATUS.SENT && rfqStatus !== PN_RFQ_STATUS.PREPARED) {
+          // 确保 constraint form 已保存（prefill from component）
+          const existingForm = demoState.get_constraint_form(cid);
+          if (!existingForm || Object.keys(existingForm).length === 0) {
+            const form = createEmptyConstraintForm();
+            prefillFromComponent(form, comp);
+            demoState.set_constraint_form(cid, form);
+            demoState.set_first_entry(cid, false);
+            demoState.set_requirement_status(cid, PN_REQUIREMENT_STATUS.SAVED_LOCKED);
+          }
+          const constraintForm = demoState.get_constraint_form(cid);
+          const supplierInfoMap = {};
+          for (const sid of latestConfirmedIds) {
+            supplierInfoMap[sid] = getSupplierById(sid) || { id: sid, name: sid };
+          }
+          const preview = generateRFQPreview({
+            project: demoState.snapshot.project,
+            component: comp,
+            constraintForm,
+            selectedSupplierIds: latestConfirmedIds,
+            supplierInfoMap,
+          });
+          const emailPreview = generateRFQEmailPreview(preview);
+          preview.email_preview = emailPreview;
+          demoState.set_rfq_preview(cid, preview);
+          demoState.set_rfq_status(cid, PN_RFQ_STATUS.PREPARED);
+        }
+
+        if (rfqStatus !== PN_RFQ_STATUS.SENT) {
+          // Step 3: 发送 RFQ
+          for (const sid of latestConfirmedIds) {
+            const logEntry = generateRfqSendLog(cid, sid);
+            demoState.add_mail_log(cid, sid, logEntry);
+          }
+          demoState.set_rfq_status(cid, PN_RFQ_STATUS.SENT);
+          demoState.increment_rfq_sent_count(cid);
+          autoSentCount++;
+          pnActions.push(`自动发送 RFQ 至 ${latestConfirmedIds.length} 家`);
+        }
+
+        // Step 4: 未全部回传 → 自动 mock 回传
+        if (collStatus !== PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED) {
+          const batchResult = mockBatchReplies(cid, latestConfirmedIds);
+          let pnLoaded = 0;
+          for (const r of batchResult.results) {
+            demoState.add_mail_log(cid, r.mail_log.supplier_id, r.mail_log);
+            if (r.quote) {
+              demoState.set_supplier_quote(cid, r.quote.supplier_id, r.quote);
+              const normalized = normalizeQuote(r.quote);
+              demoState.set_normalized_quote(cid, r.quote.supplier_id, normalized);
+              pnLoaded++;
+            }
+          }
+          if (pnLoaded > 0) {
+            demoState.set_quote_collection_status(cid, PN_QUOTE_COLLECTION_STATUS.ALL_REPLIED);
+            autoRepliedCount++;
+            pnActions.push(`自动回传 ${pnLoaded} 家报价`);
+          }
+        }
+
+        details.push({ component_id: cid, actions: pnActions });
+      }
+
+      const summaryParts = [];
+      if (autoConfirmedCount > 0) summaryParts.push(`自动确认 supplier: ${autoConfirmedCount} PN`);
+      if (autoSentCount > 0) summaryParts.push(`自动发送 RFQ: ${autoSentCount} PN`);
+      if (autoRepliedCount > 0) summaryParts.push(`自动回传: ${autoRepliedCount} PN`);
+      if (skippedCount > 0) summaryParts.push(`跳过: ${skippedCount} PN`);
+
+      ctx.success({
+        auto_confirmed_supplier: autoConfirmedCount,
+        auto_sent_rfq: autoSentCount,
+        auto_replied: autoRepliedCount,
+        skipped: skippedCount,
+        details,
+        message: summaryParts.join('，') + '（Demo 加速器）',
+      });
+    } catch (error) {
+      ctx.error(error.message, 500);
+    }
+  });
+
   // ==================== 快速初始化路由 ====================
 
   /**
